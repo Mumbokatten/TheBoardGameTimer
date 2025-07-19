@@ -769,14 +769,9 @@ const BoardGameTimer = () => {
           setTimerMode(data.timerMode || 'countup');
           setInitialTime(data.initialTime || 600);
           setCurrentGameName(data.currentGameName || '');
-          setTempGameName(data.currentGameName || '');
+          // setTempGameName(data.currentGameName || ''); // Removed - temp variable not needed
           
-          // Update temp player names
-          const newTempNames = {};
-          data.players?.forEach(player => {
-            newTempNames[player.id] = player.name;
-          });
-          setTempPlayerNames(newTempNames);
+          // Note: temp player names not needed in current implementation
         }
         setConnectionStatus('connected');
         setIsOnline(true);
