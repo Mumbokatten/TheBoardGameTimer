@@ -1,0 +1,700 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Alert } from 'react-native';
+
+const BoardGameTimer = () => {
+  const [currentScreen, setCurrentScreen] = useState('home');
+  const [players, setPlayers] = useState([
+    { id: 1, name: 'Player 1', time: 0, isActive: false },
+    { id: 2, name: 'Player 2', time: 0, isActive: false }
+  ]);
+  const [activePlayerId, setActivePlayerId] = useState(null);
+  const [isRunning, setIsRunning] = useState(false);
+  const [gameStarted, setGameStarted] = useState(false);
+  const [timerMode, setTimerMode] = useState('countup');
+  const [initialTime, setInitialTime] = useState(600);
+  const [gameHistory, setGameHistory] = useState([]);
+  const [currentGameName, setCurrentGameName] = useState('');
+  const [gameId, setGameId] = useState('');
+  const [joinGameId, setJoinGameId] = useState('');
+  const intervalRef = useRef();
+
+  // Timer effect
+  useEffect(() => {
+    if (isRunning && activePlayerId !== null) {
+      intervalRef.current = setInterval(() => {
+        setPlayers(prev => prev.map(player => {
+          if (player.id === activePlayerId) {
+            const newTime = timerMode === 'countup' 
+              ? player.time + 1 
+              : Math.max(0, player.time - 1);
+            return { ...player, time: newTime };
+          }
+          return player;
+        }));
+      }, 1000);
+    } else {
+      clearInterval(intervalRef.current);
+    }
+
+    return () => clearInterval(intervalRef.current);
+  }, [isRunning, activePlayerId, timerMode]);
+
+  const formatTime = (seconds) => {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+    
+    if (hours > 0) {
+      return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    }
+    return `${minutes}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const generateGameId = () => {
+    return Math.random().toString(36).substring(2, 8).toUpperCase();
+  };
+
+  const createNewGame = () => {
+    const newGameId = generateGameId();
+    setGameId(newGameId);
+    setCurrentScreen('game');
+    resetGame();
+    Alert.alert('Game Created', `Game ID: ${newGameId}`);
+  };
+
+  const joinGame = () => {
+    if (!joinGameId.trim()) return;
+    const gameIdToJoin = joinGameId.trim().toUpperCase();
+    setGameId(gameIdToJoin);
+    setCurrentScreen('game');
+    Alert.alert('Joined Game', `Connected to game: ${gameIdToJoin}`);
+  };
+
+  const addPlayer = () => {
+    const newId = Math.max(...players.map(p => p.id)) + 1;
+    const newPlayer = {
+      id: newId,
+      name: `Player ${newId}`,
+      time: timerMode === 'countdown' ? initialTime : 0,
+      isActive: false
+    };
+    setPlayers([...players, newPlayer]);
+  };
+
+  const removePlayer = (id) => {
+    if (players.length > 2) {
+      setPlayers(players.filter(p => p.id !== id));
+      if (activePlayerId === id) {
+        setActivePlayerId(null);
+        setIsRunning(false);
+      }
+    }
+  };
+
+  const updatePlayerName = (id, name) => {
+    setPlayers(prev => prev.map(player => 
+      player.id === id ? { ...player, name } : player
+    ));
+  };
+
+  const startPlayerTurn = (playerId) => {
+    setActivePlayerId(playerId);
+    setIsRunning(true);
+    setGameStarted(true);
+    setPlayers(prev => prev.map(player => ({
+      ...player,
+      isActive: player.id === playerId
+    })));
+  };
+
+  const pauseGame = () => setIsRunning(false);
+  const resumeGame = () => { if (activePlayerId !== null) setIsRunning(true); };
+
+  const nextPlayer = () => {
+    const currentIndex = players.findIndex(p => p.id === activePlayerId);
+    const nextIndex = (currentIndex + 1) % players.length;
+    const nextPlayerId = players[nextIndex].id;
+    startPlayerTurn(nextPlayerId);
+  };
+
+  const resetGame = () => {
+    setIsRunning(false);
+    setActivePlayerId(null);
+    setGameStarted(false);
+    const resetTime = timerMode === 'countdown' ? initialTime : 0;
+    setPlayers(prev => prev.map(player => ({
+      ...player,
+      time: resetTime,
+      isActive: false
+    })));
+  };
+
+  const saveGame = () => {
+    if (!gameStarted) return;
+    
+    const gameData = {
+      id: Date.now(),
+      name: currentGameName || `Game ${new Date().toLocaleDateString()}`,
+      date: new Date().toISOString(),
+      players: players.map(p => ({
+        name: p.name,
+        time: p.time,
+        formattedTime: formatTime(p.time)
+      })),
+      timerMode,
+      totalTime: players.reduce((sum, p) => sum + p.time, 0)
+    };
+    
+    setGameHistory(prev => [gameData, ...prev]);
+    Alert.alert('Success', 'Game saved successfully!');
+  };
+
+  // Screen Components
+  const HomeScreen = () => (
+    <ScrollView contentContainerStyle={styles.container}>
+      <View style={styles.header}>
+        <Text style={styles.title}>🎲 Board Game Timer</Text>
+        <Text style={styles.subtitle}>Track time for every player</Text>
+      </View>
+
+      <View style={styles.buttonContainer}>
+        <TouchableOpacity style={[styles.button, styles.primaryButton]} onPress={createNewGame}>
+          <Text style={styles.buttonText}>🎮 New Game</Text>
+        </TouchableOpacity>
+        
+        <TouchableOpacity style={[styles.button, styles.secondaryButton]} onPress={() => setCurrentScreen('join')}>
+          <Text style={styles.buttonText}>📱 Join Game</Text>
+        </TouchableOpacity>
+        
+        <TouchableOpacity style={[styles.button, styles.tertiaryButton]} onPress={() => setCurrentScreen('history')}>
+          <Text style={styles.buttonText}>🏆 Game History</Text>
+        </TouchableOpacity>
+      </View>
+
+      {gameHistory.length > 0 && (
+        <View style={styles.recentGames}>
+          <Text style={styles.sectionTitle}>Recent Games</Text>
+          {gameHistory.slice(0, 3).map(game => (
+            <View key={game.id} style={styles.gameHistoryItem}>
+              <Text style={styles.gameName}>{game.name}</Text>
+              <Text style={styles.gameDate}>{new Date(game.date).toLocaleDateString()}</Text>
+            </View>
+          ))}
+        </View>
+      )}
+    </ScrollView>
+  );
+
+  const JoinGameScreen = () => (
+    <ScrollView contentContainerStyle={styles.container}>
+      <View style={styles.header}>
+        <Text style={styles.title}>📱 Join Game</Text>
+        <Text style={styles.subtitle}>Enter the game ID to join</Text>
+      </View>
+
+      <View style={styles.inputContainer}>
+        <TextInput
+          style={styles.input}
+          placeholder="Enter Game ID (e.g. ABC123)"
+          placeholderTextColor="#999"
+          value={joinGameId}
+          onChangeText={(text) => setJoinGameId(text.toUpperCase())}
+          maxLength={6}
+        />
+        
+        <TouchableOpacity 
+          style={[styles.button, styles.primaryButton, !joinGameId.trim() && styles.disabledButton]} 
+          onPress={joinGame}
+          disabled={!joinGameId.trim()}
+        >
+          <Text style={styles.buttonText}>Join Game</Text>
+        </TouchableOpacity>
+        
+        <TouchableOpacity style={[styles.button, styles.secondaryButton]} onPress={() => setCurrentScreen('home')}>
+          <Text style={styles.buttonText}>Back to Home</Text>
+        </TouchableOpacity>
+      </View>
+    </ScrollView>
+  );
+
+  const GameHistoryScreen = () => (
+    <ScrollView contentContainerStyle={styles.container}>
+      <View style={styles.headerRow}>
+        <Text style={styles.title}>🏆 Game History</Text>
+        <TouchableOpacity style={styles.backButton} onPress={() => setCurrentScreen('home')}>
+          <Text style={styles.backButtonText}>🏠 Home</Text>
+        </TouchableOpacity>
+      </View>
+
+      {gameHistory.length === 0 ? (
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyTitle}>No games saved yet</Text>
+          <Text style={styles.emptySubtitle}>Play a game and save it to see it here!</Text>
+        </View>
+      ) : (
+        <View style={styles.historyList}>
+          {gameHistory.map(game => (
+            <View key={game.id} style={styles.historyCard}>
+              <View style={styles.historyHeader}>
+                <Text style={styles.historyGameName}>{game.name}</Text>
+                <Text style={styles.historyDate}>{new Date(game.date).toLocaleDateString()}</Text>
+              </View>
+              
+              <Text style={styles.historyTotal}>Total Time: {formatTime(game.totalTime)}</Text>
+              
+              <View style={styles.historyPlayers}>
+                {game.players.map((player, idx) => (
+                  <Text key={idx} style={styles.historyPlayer}>
+                    {player.name}: {player.formattedTime}
+                  </Text>
+                ))}
+              </View>
+            </View>
+          ))}
+        </View>
+      )}
+    </ScrollView>
+  );
+
+  const GameScreen = () => (
+    <ScrollView contentContainerStyle={styles.container}>
+      <View style={styles.headerRow}>
+        <Text style={styles.title}>
+          {gameId ? `Game: ${gameId}` : '🎲 Board Game Timer'}
+        </Text>
+        <TouchableOpacity style={styles.backButton} onPress={() => setCurrentScreen('home')}>
+          <Text style={styles.backButtonText}>🏠</Text>
+        </TouchableOpacity>
+      </View>
+
+      <TextInput
+        style={styles.gameNameInput}
+        placeholder="Enter game name (optional)"
+        placeholderTextColor="#999"
+        value={currentGameName}
+        onChangeText={setCurrentGameName}
+      />
+
+      <View style={styles.controlsContainer}>
+        <TouchableOpacity style={[styles.controlButton, styles.addButton]} onPress={addPlayer}>
+          <Text style={styles.controlButtonText}>➕ Add Player</Text>
+        </TouchableOpacity>
+        
+        {!isRunning ? (
+          <TouchableOpacity 
+            style={[styles.controlButton, styles.playButton, activePlayerId === null && styles.disabledButton]} 
+            onPress={resumeGame}
+            disabled={activePlayerId === null}
+          >
+            <Text style={styles.controlButtonText}>
+              ▶️ {gameStarted ? 'Resume' : 'Start'}
+            </Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity style={[styles.controlButton, styles.pauseButton]} onPress={pauseGame}>
+            <Text style={styles.controlButtonText}>⏸️ Pause</Text>
+          </TouchableOpacity>
+        )}
+        
+        {gameStarted && (
+          <>
+            <TouchableOpacity style={[styles.controlButton, styles.nextButton]} onPress={nextPlayer}>
+              <Text style={styles.controlButtonText}>⏭️ Next</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.controlButton, styles.saveButton]} onPress={saveGame}>
+              <Text style={styles.controlButtonText}>💾 Save</Text>
+            </TouchableOpacity>
+          </>
+        )}
+        
+        <TouchableOpacity style={[styles.controlButton, styles.resetButton]} onPress={resetGame}>
+          <Text style={styles.controlButtonText}>🔄 Reset</Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.playersGrid}>
+        {players.map((player) => (
+          <View
+            key={player.id}
+            style={[
+              styles.playerCard,
+              player.isActive && styles.activePlayerCard
+            ]}
+          >
+            <View style={styles.playerHeader}>
+              <TextInput
+                style={styles.playerNameInput}
+                value={player.name}
+                onChangeText={(text) => updatePlayerName(player.id, text)}
+              />
+              {players.length > 2 && (
+                <TouchableOpacity onPress={() => removePlayer(player.id)}>
+                  <Text style={styles.removeButton}>❌</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            
+            <View style={styles.timeContainer}>
+              <Text style={[
+                styles.timeDisplay,
+                timerMode === 'countdown' && player.time <= 60 && styles.urgentTime
+              ]}>
+                {formatTime(player.time)}
+              </Text>
+              {timerMode === 'countdown' && player.time <= 60 && player.time > 0 && (
+                <Text style={styles.urgentText}>TIME RUNNING OUT!</Text>
+              )}
+            </View>
+            
+            <TouchableOpacity
+              style={[
+                styles.playerButton,
+                (player.isActive && isRunning) && styles.disabledButton
+              ]}
+              onPress={() => startPlayerTurn(player.id)}
+              disabled={player.isActive && isRunning}
+            >
+              <Text style={styles.playerButtonText}>
+                {player.isActive && isRunning ? 'Active' : 'Start Turn'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        ))}
+      </View>
+
+      {gameStarted && (
+        <View style={styles.statsContainer}>
+          <Text style={styles.statsTitle}>📊 Game Statistics</Text>
+          <View style={styles.statsGrid}>
+            <View style={styles.statItem}>
+              <Text style={styles.statLabel}>Total Time</Text>
+              <Text style={styles.statValue}>
+                {formatTime(players.reduce((sum, p) => sum + p.time, 0))}
+              </Text>
+            </View>
+            <View style={styles.statItem}>
+              <Text style={styles.statLabel}>Active Player</Text>
+              <Text style={styles.statValue}>
+                {activePlayerId ? players.find(p => p.id === activePlayerId)?.name : 'None'}
+              </Text>
+            </View>
+            <View style={styles.statItem}>
+              <Text style={styles.statLabel}>Players</Text>
+              <Text style={styles.statValue}>{players.length}</Text>
+            </View>
+          </View>
+        </View>
+      )}
+    </ScrollView>
+  );
+
+  return (
+    <View style={styles.app}>
+      {currentScreen === 'home' && <HomeScreen />}
+      {currentScreen === 'game' && <GameScreen />}
+      {currentScreen === 'history' && <GameHistoryScreen />}
+      {currentScreen === 'join' && <JoinGameScreen />}
+    </View>
+  );
+};
+
+const styles = StyleSheet.create({
+  app: {
+    flex: 1,
+    backgroundColor: '#1a1a2e',
+  },
+  container: {
+    flexGrow: 1,
+    padding: 20,
+    backgroundColor: '#1a1a2e',
+  },
+  header: {
+    alignItems: 'center',
+    marginBottom: 40,
+    marginTop: 40,
+  },
+  title: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    color: '#ffffff',
+    textAlign: 'center',
+    marginBottom: 10,
+  },
+  subtitle: {
+    fontSize: 16,
+    color: '#cccccc',
+    textAlign: 'center',
+  },
+  buttonContainer: {
+    width: '100%',
+    maxWidth: 300,
+    alignSelf: 'center',
+  },
+  button: {
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 12,
+    alignItems: 'center',
+  },
+  primaryButton: {
+    backgroundColor: '#3b82f6',
+  },
+  secondaryButton: {
+    backgroundColor: '#10b981',
+  },
+  tertiaryButton: {
+    backgroundColor: '#8b5cf6',
+  },
+  disabledButton: {
+    backgroundColor: '#6b7280',
+    opacity: 0.5,
+  },
+  buttonText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  recentGames: {
+    marginTop: 30,
+    padding: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: 12,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#ffffff',
+    marginBottom: 12,
+  },
+  gameHistoryItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+  },
+  gameName: {
+    color: '#ffffff',
+    fontSize: 14,
+  },
+  gameDate: {
+    color: '#cccccc',
+    fontSize: 12,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+    marginTop: 20,
+  },
+  backButton: {
+    padding: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 8,
+  },
+  backButtonText: {
+    color: '#ffffff',
+    fontSize: 14,
+  },
+  inputContainer: {
+    width: '100%',
+    maxWidth: 300,
+    alignSelf: 'center',
+  },
+  input: {
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    color: '#ffffff',
+    padding: 16,
+    borderRadius: 12,
+    fontSize: 16,
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  gameNameInput: {
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    color: '#ffffff',
+    padding: 12,
+    borderRadius: 8,
+    fontSize: 16,
+    marginBottom: 16,
+  },
+  controlsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 8,
+    marginBottom: 20,
+  },
+  controlButton: {
+    padding: 10,
+    borderRadius: 8,
+    minWidth: 80,
+    alignItems: 'center',
+  },
+  addButton: {
+    backgroundColor: '#10b981',
+  },
+  playButton: {
+    backgroundColor: '#3b82f6',
+  },
+  pauseButton: {
+    backgroundColor: '#f59e0b',
+  },
+  nextButton: {
+    backgroundColor: '#8b5cf6',
+  },
+  saveButton: {
+    backgroundColor: '#059669',
+  },
+  resetButton: {
+    backgroundColor: '#ef4444',
+  },
+  controlButtonText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  playersGrid: {
+    gap: 16,
+  },
+  playerCard: {
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  activePlayerCard: {
+    borderColor: '#fbbf24',
+    backgroundColor: 'rgba(251, 191, 36, 0.1)',
+  },
+  playerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  playerNameInput: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '600',
+    flex: 1,
+  },
+  removeButton: {
+    fontSize: 16,
+  },
+  timeContainer: {
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  timeDisplay: {
+    fontSize: 32,
+    fontWeight: 'bold',
+    color: '#ffffff',
+    fontFamily: 'monospace',
+  },
+  urgentTime: {
+    color: '#ef4444',
+  },
+  urgentText: {
+    color: '#ef4444',
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 4,
+  },
+  playerButton: {
+    backgroundColor: '#3b82f6',
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  playerButtonText: {
+    color: '#ffffff',
+    fontWeight: '600',
+  },
+  statsContainer: {
+    marginTop: 20,
+    padding: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: 12,
+  },
+  statsTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#ffffff',
+    marginBottom: 12,
+  },
+  statsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+  },
+  statItem: {
+    alignItems: 'center',
+    minWidth: '30%',
+    marginBottom: 12,
+  },
+  statLabel: {
+    color: '#cccccc',
+    fontSize: 12,
+    marginBottom: 4,
+  },
+  statValue: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  emptyState: {
+    alignItems: 'center',
+    marginTop: 60,
+  },
+  emptyTitle: {
+    fontSize: 20,
+    color: '#ffffff',
+    marginBottom: 8,
+  },
+  emptySubtitle: {
+    fontSize: 14,
+    color: '#cccccc',
+  },
+  historyList: {
+    gap: 16,
+  },
+  historyCard: {
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    padding: 16,
+    borderRadius: 12,
+  },
+  historyHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  historyGameName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#ffffff',
+  },
+  historyDate: {
+    fontSize: 12,
+    color: '#cccccc',
+  },
+  historyTotal: {
+    fontSize: 14,
+    color: '#ffffff',
+    marginBottom: 8,
+  },
+  historyPlayers: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  historyPlayer: {
+    fontSize: 12,
+    color: '#cccccc',
+    backgroundColor: 'rgba(0, 0, 0, 0.2)',
+    padding: 4,
+    borderRadius: 4,
+  },
+});
+
+export default BoardGameTimer;
