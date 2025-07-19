@@ -1,0 +1,6 @@
+Starting project at C:\Users\devil\TestApp
+› Port 3002 is being used by another process
+Input is required, but 'npx expo' is in non-interactive mode.
+Required input:
+> Use port 3003 instead?
+› Skipping dev server

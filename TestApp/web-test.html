@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Board Game Timer - Input Focus Test</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+            background: #1a1a2e;
+            color: white;
+            padding: 20px;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .title {
+            font-size: 28px;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+        .subtitle {
+            font-size: 16px;
+            color: #a0aec0;
+            margin-bottom: 20px;
+        }
+        .test-section {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+        }
+        .test-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 15px;
+            color: #3b82f6;
+        }
+        .input-group {
+            margin-bottom: 15px;
+        }
+        .input-label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 14px;
+            color: #e2e8f0;
+        }
+        input {
+            width: 100%;
+            padding: 12px;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            font-size: 16px;
+            outline: none;
+            box-sizing: border-box;
+        }
+        input:focus {
+            border-color: #3b82f6;
+            background: rgba(59, 130, 246, 0.1);
+        }
+        .player-card {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+        }
+        .player-name-input {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            color: white;
+            font-size: 16px;
+            font-weight: 600;
+            width: 200px;
+        }
+        .button {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            margin: 5px;
+        }
+        .button:hover {
+            background: #2563eb;
+        }
+        .success {
+            color: #10b981;
+            font-weight: 600;
+        }
+        .error {
+            color: #ef4444;
+            font-weight: 600;
+        }
+        .status {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 6px;
+            background: rgba(0, 0, 0, 0.3);
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useCallback } = React;
+
+        // External components - moved outside to prevent recreation
+        const HomeScreen = ({ 
+            gameName, 
+            handleGameNameChange, 
+            createNewGame, 
+            setCurrentScreen 
+        }) => (
+            <div className="test-section">
+                <div className="test-title">🏠 Home Screen - Game Name Input Test</div>
+                <div className="input-group">
+                    <label className="input-label">Game Name (should allow continuous typing):</label>
+                    <input
+                        type="text"
+                        placeholder="Enter game name"
+                        value={gameName}
+                        onChange={(e) => handleGameNameChange(e.target.value)}
+                        autoComplete="off"
+                    />
+                </div>
+                <button className="button" onClick={createNewGame}>
+                    🎮 Create New Game
+                </button>
+                <button className="button" onClick={() => setCurrentScreen('join')}>
+                    📱 Join Existing Game
+                </button>
+            </div>
+        );
+
+        const JoinGameScreen = ({ 
+            joinGameId, 
+            handleJoinGameIdChange, 
+            joinGame, 
+            setCurrentScreen 
+        }) => (
+            <div className="test-section">
+                <div className="test-title">📱 Join Game Screen - ID Input Test</div>
+                <div className="input-group">
+                    <label className="input-label">Game ID (should allow continuous typing):</label>
+                    <input
+                        type="text"
+                        placeholder="Enter Game ID (e.g. ABC123)"
+                        value={joinGameId}
+                        onChange={(e) => handleJoinGameIdChange(e.target.value.toUpperCase())}
+                        maxLength={6}
+                        autoComplete="off"
+                    />
+                </div>
+                <button className="button" onClick={joinGame} disabled={!joinGameId.trim()}>
+                    Join Game
+                </button>
+                <button className="button" onClick={() => setCurrentScreen('home')}>
+                    Back to Home
+                </button>
+            </div>
+        );
+
+        const GameScreen = ({ 
+            players, 
+            handlePlayerNameChange, 
+            addPlayer, 
+            setCurrentScreen 
+        }) => (
+            <div className="test-section">
+                <div className="test-title">🎮 Game Screen - Player Name Input Test</div>
+                {players.map((player) => (
+                    <div key={player.id} className="player-card">
+                        <label className="input-label">Player {player.id} Name:</label>
+                        <input
+                            className="player-name-input"
+                            type="text"
+                            value={player.name}
+                            onChange={(e) => handlePlayerNameChange(player.id, e.target.value)}
+                            autoComplete="off"
+                        />
+                    </div>
+                ))}
+                <button className="button" onClick={addPlayer}>
+                    ➕ Add Player
+                </button>
+                <button className="button" onClick={() => setCurrentScreen('home')}>
+                    🏠 Back to Home
+                </button>
+            </div>
+        );
+
+        // Main component
+        const BoardGameTimerTest = () => {
+            const [currentScreen, setCurrentScreen] = useState('home');
+            const [gameName, setGameName] = useState('');
+            const [joinGameId, setJoinGameId] = useState('');
+            const [players, setPlayers] = useState([
+                { id: 1, name: 'Player 1' },
+                { id: 2, name: 'Player 2' }
+            ]);
+            const [testResults, setTestResults] = useState([]);
+
+            // Debounced handlers using useCallback
+            const handleGameNameChange = useCallback((text) => {
+                console.log('Game name changing:', text);
+                setGameName(text);
+                setTestResults(prev => [...prev, `✅ Game name typed: "${text}"`]);
+            }, []);
+
+            const handleJoinGameIdChange = useCallback((text) => {
+                console.log('Join game ID changing:', text);
+                setJoinGameId(text);
+                setTestResults(prev => [...prev, `✅ Join ID typed: "${text}"`]);
+            }, []);
+
+            const handlePlayerNameChange = useCallback((playerId, text) => {
+                console.log('Player name changing:', playerId, text);
+                setPlayers(prev => prev.map(player => 
+                    player.id === playerId ? { ...player, name: text } : player
+                ));
+                setTestResults(prev => [...prev, `✅ Player ${playerId} name: "${text}"`]);
+            }, []);
+
+            const addPlayer = () => {
+                const newId = Math.max(...players.map(p => p.id)) + 1;
+                setPlayers(prev => [...prev, { id: newId, name: `Player ${newId}` }]);
+            };
+
+            const createNewGame = () => {
+                setCurrentScreen('game');
+                setTestResults(prev => [...prev, `✅ Created game: "${gameName}"`]);
+            };
+
+            const joinGame = () => {
+                setCurrentScreen('game');
+                setTestResults(prev => [...prev, `✅ Joined game: "${joinGameId}"`]);
+            };
+
+            return (
+                <div className="container">
+                    <div className="header">
+                        <div className="title">🎲 Board Game Timer - Input Focus Test</div>
+                        <div className="subtitle">Testing the single-character input fix</div>
+                        <div style={{color: '#10b981', fontWeight: '600'}}>
+                            ✅ Components are defined OUTSIDE main component to prevent focus loss
+                        </div>
+                    </div>
+
+                    {currentScreen === 'home' && (
+                        <HomeScreen 
+                            gameName={gameName}
+                            handleGameNameChange={handleGameNameChange}
+                            createNewGame={createNewGame}
+                            setCurrentScreen={setCurrentScreen}
+                        />
+                    )}
+                    
+                    {currentScreen === 'join' && (
+                        <JoinGameScreen 
+                            joinGameId={joinGameId}
+                            handleJoinGameIdChange={handleJoinGameIdChange}
+                            joinGame={joinGame}
+                            setCurrentScreen={setCurrentScreen}
+                        />
+                    )}
+                    
+                    {currentScreen === 'game' && (
+                        <GameScreen 
+                            players={players}
+                            handlePlayerNameChange={handlePlayerNameChange}
+                            addPlayer={addPlayer}
+                            setCurrentScreen={setCurrentScreen}
+                        />
+                    )}
+
+                    <div className="test-section">
+                        <div className="test-title">📊 Test Results</div>
+                        <div style={{fontSize: '14px', marginBottom: '10px'}}>
+                            <strong>How to test:</strong>
+                            <ol>
+                                <li>Click any input field</li>
+                                <li>Type multiple characters continuously</li>
+                                <li>Verify you can type full words without losing focus</li>
+                                <li>Try all different input fields</li>
+                            </ol>
+                        </div>
+                        <div className="status">
+                            {testResults.length === 0 ? (
+                                <div>Start typing in any input field to see results...</div>
+                            ) : (
+                                testResults.slice(-10).map((result, index) => (
+                                    <div key={index} style={{marginBottom: '5px'}}>{result}</div>
+                                ))
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        ReactDOM.render(<BoardGameTimerTest />, document.getElementById('root'));
+    </script>
+</body>
+</html>

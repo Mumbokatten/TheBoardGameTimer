@@ -210,6 +210,279 @@ const GameHistoryScreen = ({ gameHistory, setCurrentScreen, formatTime }) => (
   </ScrollView>
 );
 
+const GameScreen = ({
+  gameId,
+  firebase,
+  connectionStatus,
+  shareGame,
+  setShowSettings,
+  setCurrentScreen,
+  currentGameName,
+  handleGameNameChange,
+  addPlayer,
+  isRunning,
+  activePlayerId,
+  resumeGame,
+  gameStarted,
+  pauseGame,
+  nextPlayer,
+  saveGame,
+  resetGame,
+  players,
+  getPlayerGridCols,
+  showColorPicker,
+  setShowColorPicker,
+  handlePlayerNameChange,
+  removePlayer,
+  PLAYER_COLORS,
+  updatePlayerColor,
+  timerMode,
+  formatTime,
+  getAverageTurnTime,
+  startPlayerTurn
+}) => (
+  <View style={styles.container}>
+    <View style={styles.headerRow}>
+      <View>
+        <Text style={styles.title}>
+          {gameId ? `Game: ${gameId}` : '🎲 Board Game Timer'}
+        </Text>
+        {firebase && gameId && (
+          <Text style={[
+            styles.connectionStatus,
+            connectionStatus === 'connected' && styles.connectedStatus,
+            connectionStatus === 'connecting' && styles.connectingStatus,
+            connectionStatus === 'error' && styles.errorStatus
+          ]}>
+            {connectionStatus === 'connected' && '🔥 Connected'}
+            {connectionStatus === 'connecting' && '⏳ Connecting...'}
+            {connectionStatus === 'error' && '❌ Connection Error'}
+            {connectionStatus === 'local' && '💾 Local Mode'}
+            {connectionStatus === 'offline' && '📱 Offline'}
+          </Text>
+        )}
+      </View>
+      <View style={styles.headerButtons}>
+        {gameId && (
+          <TouchableOpacity style={styles.shareButton} onPress={shareGame}>
+            <Text style={styles.shareButtonText}>📤 Share</Text>
+          </TouchableOpacity>
+        )}
+        <TouchableOpacity style={styles.settingsIconButton} onPress={() => setShowSettings(true)}>
+          <Text style={styles.settingsIconText}>⚙️</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.backButton} onPress={() => setCurrentScreen('home')}>
+          <Text style={styles.backButtonText}>🏠</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+
+    <TextInput
+      key="game-name-input"
+      style={styles.gameNameInput}
+      placeholder="Enter game name (optional)"
+      placeholderTextColor="#999"
+      value={currentGameName}
+      onChangeText={handleGameNameChange}
+      autoComplete="off"
+      selectTextOnFocus={true}
+    />
+
+    <View style={styles.controlsContainer}>
+      <TouchableOpacity 
+        style={[styles.controlButton, styles.addButton]} 
+        onPress={addPlayer}
+      >
+        <Text style={styles.controlButtonText}>➕ Add Player</Text>
+      </TouchableOpacity>
+      
+      {!isRunning ? (
+        <TouchableOpacity 
+          style={[styles.controlButton, styles.playButton, activePlayerId === null && styles.disabledButton]} 
+          onPress={resumeGame}
+          disabled={activePlayerId === null}
+        >
+          <Text style={styles.controlButtonText}>
+            ▶️ {gameStarted ? 'Resume' : 'Start'}
+          </Text>
+        </TouchableOpacity>
+      ) : (
+        <TouchableOpacity 
+          style={[styles.controlButton, styles.pauseButton]} 
+          onPress={pauseGame}
+        >
+          <Text style={styles.controlButtonText}>⏸️ Pause</Text>
+        </TouchableOpacity>
+      )}
+      
+      {gameStarted && (
+        <>
+          <TouchableOpacity 
+            style={[styles.controlButton, styles.nextButton]} 
+            onPress={nextPlayer}
+          >
+            <Text style={styles.controlButtonText}>⏭️ Next</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.controlButton, styles.saveButton]} onPress={saveGame}>
+            <Text style={styles.controlButtonText}>💾 Save</Text>
+          </TouchableOpacity>
+        </>
+      )}
+      
+      <TouchableOpacity 
+        style={[styles.controlButton, styles.resetButton]} 
+        onPress={resetGame}
+      >
+        <Text style={styles.controlButtonText}>🔄 Reset</Text>
+      </TouchableOpacity>
+    </View>
+
+    <View style={[styles.playersGrid, { 
+      flexDirection: getPlayerGridCols() === 1 ? 'column' : 'row',
+      flexWrap: getPlayerGridCols() > 1 ? 'wrap' : 'nowrap'
+    }]}>
+      {players.map((player) => {
+        return (
+          <View
+            key={player.id}
+            style={[
+              styles.playerCard,
+              { 
+                backgroundColor: player.color + '30', 
+                borderColor: player.color,
+                borderWidth: player.isActive ? 4 : 2,
+              },
+              player.isActive && { backgroundColor: player.color + '40' },
+              getPlayerGridCols() > 1 && { 
+                width: getPlayerGridCols() === 2 ? '48%' : '31%',
+                marginBottom: 8
+              }
+            ]}
+          >
+            <View style={styles.playerHeader}>
+              <TextInput
+                key={`player-name-${player.id}`}
+                style={styles.playerNameInput}
+                value={player.name}
+                onChangeText={handlePlayerNameChange(player.id)}
+                autoComplete="off"
+                selectTextOnFocus={true}
+                editable={true}
+              />
+              <View style={styles.playerControls}>
+                <TouchableOpacity 
+                  style={[styles.colorButton, { backgroundColor: player.color }]}
+                  onPress={() => setShowColorPicker(showColorPicker === player.id ? null : player.id)}
+                >
+                  <Text style={styles.colorButtonText}>🎨</Text>
+                </TouchableOpacity>
+                {players.length > 2 && (
+                  <TouchableOpacity 
+                    onPress={() => removePlayer(player.id)}
+                  >
+                    <Text style={styles.removeButton}>❌</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+            
+            {showColorPicker === player.id && (
+              <View style={styles.colorPicker}>
+                <Text style={styles.colorPickerTitle}>Choose Color:</Text>
+                <View style={styles.colorGrid}>
+                  {PLAYER_COLORS.map((color, index) => (
+                    <TouchableOpacity
+                      key={index}
+                      style={[
+                        styles.colorOption,
+                        { backgroundColor: color.value },
+                        player.color === color.value && styles.selectedColor
+                      ]}
+                      onPress={() => {
+                        updatePlayerColor(player.id, color.value);
+                        setShowColorPicker(null);
+                      }}
+                    >
+                      {player.color === color.value && (
+                        <Text style={styles.selectedColorCheck}>✓</Text>
+                      )}
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            )}
+            
+            <View style={styles.timeContainer}>
+              <Text style={[
+                styles.timeDisplay,
+                timerMode === 'countdown' && player.time <= 60 && styles.urgentTime
+              ]}>
+                {formatTime(player.time)}
+              </Text>
+              {timerMode === 'countdown' && player.time <= 60 && player.time > 0 && (
+                <Text style={styles.urgentText}>TIME RUNNING OUT!</Text>
+              )}
+              
+              <View style={styles.playerStats}>
+                <Text style={styles.statText}>
+                  🎯 Turns: {player.turns || 0}
+                </Text>
+                <Text style={styles.statText}>
+                  ⏱️ Avg: {formatTime(getAverageTurnTime(player))}
+                </Text>
+              </View>
+            </View>
+            
+            <TouchableOpacity
+              style={[
+                styles.playerButton,
+                { 
+                  backgroundColor: player.isActive && isRunning ? player.color : player.color + '80',
+                  borderColor: player.color,
+                  borderWidth: 2
+                }
+              ]}
+              onPress={() => startPlayerTurn(player.id)}
+              disabled={player.isActive && isRunning}
+            >
+              <Text style={[
+                styles.playerButtonText,
+                { color: player.isActive && isRunning ? '#ffffff' : '#ffffff' }
+              ]}>
+                {player.isActive && isRunning ? '⏸️ Active Turn' : '▶️ Start Turn'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        );
+      })}
+    </View>
+
+    {gameStarted && (
+      <View style={styles.statsContainer}>
+        <Text style={styles.statsTitle}>📊 Game Statistics</Text>
+        <View style={styles.statsGrid}>
+          <View style={styles.statItem}>
+            <Text style={styles.statLabel}>Total Time</Text>
+            <Text style={styles.statValue}>
+              {formatTime(players.reduce((sum, p) => sum + p.time, 0))}
+            </Text>
+          </View>
+          <View style={styles.statItem}>
+            <Text style={styles.statLabel}>Active Player</Text>
+            <Text style={styles.statValue}>
+              {activePlayerId ? players.find(p => p.id === activePlayerId)?.name : 'None'}
+            </Text>
+          </View>
+          <View style={styles.statItem}>
+            <Text style={styles.statLabel}>Players</Text>
+            <Text style={styles.statValue}>{players.length}</Text>
+          </View>
+        </View>
+      </View>
+    )}
+  </View>
+);
+
 const BoardGameTimer = () => {
   const [currentScreen, setCurrentScreen] = useState('home');
   const [testInput, setTestInput] = useState('Type here to test');
@@ -363,7 +636,8 @@ const BoardGameTimer = () => {
       try {
         if (navigator.clipboard) {
           await navigator.clipboard.writeText(gameId);
-          Alert.alert('Copied!', `Session ID "${gameId}" copied to clipboard`);
+          // Show a proper web alert
+          alert(`✅ Copied! Session ID "${gameId}" copied to clipboard`);
         } else {
           // Fallback for older browsers
           const textArea = document.createElement('textarea');
@@ -372,7 +646,7 @@ const BoardGameTimer = () => {
           textArea.select();
           document.execCommand('copy');
           document.body.removeChild(textArea);
-          Alert.alert('Copied!', `Session ID "${gameId}" copied to clipboard`);
+          alert(`✅ Copied! Session ID "${gameId}" copied to clipboard`);
         }
       } catch (error) {
         console.log('Copy failed:', error);
@@ -380,7 +654,7 @@ const BoardGameTimer = () => {
           ? '🔥 Multiplayer enabled with Firebase!'
           : '📱 Running in local mode.';
         const shareText = `Game ID: ${gameId}\n\n${modeText}`;
-        Alert.alert('Share Game', shareText);
+        alert(`Share Game: ${shareText}`);
       }
     }
   };
@@ -658,249 +932,6 @@ const BoardGameTimer = () => {
   };
 
 
-  const GameScreen = () => (
-    <View style={styles.container}>
-
-      <View style={styles.headerRow}>
-        <View>
-          <Text style={styles.title}>
-            {gameId ? `Game: ${gameId}` : '🎲 Board Game Timer'}
-          </Text>
-          {firebase && gameId && (
-            <Text style={[
-              styles.connectionStatus,
-              connectionStatus === 'connected' && styles.connectedStatus,
-              connectionStatus === 'connecting' && styles.connectingStatus,
-              connectionStatus === 'error' && styles.errorStatus
-            ]}>
-              {connectionStatus === 'connected' && '🔥 Connected'}
-              {connectionStatus === 'connecting' && '⏳ Connecting...'}
-              {connectionStatus === 'error' && '❌ Connection Error'}
-              {connectionStatus === 'local' && '💾 Local Mode'}
-              {connectionStatus === 'offline' && '📱 Offline'}
-            </Text>
-          )}
-        </View>
-        <View style={styles.headerButtons}>
-          {gameId && (
-            <TouchableOpacity style={styles.shareButton} onPress={shareGame}>
-              <Text style={styles.shareButtonText}>📤 Share</Text>
-            </TouchableOpacity>
-          )}
-          <TouchableOpacity style={styles.settingsIconButton} onPress={() => setShowSettings(true)}>
-            <Text style={styles.settingsIconText}>⚙️</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.backButton} onPress={() => setCurrentScreen('home')}>
-            <Text style={styles.backButtonText}>🏠</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      <TextInput
-        key="game-name-input"
-        style={styles.gameNameInput}
-        placeholder="Enter game name (optional)"
-        placeholderTextColor="#999"
-        value={currentGameName}
-        onChangeText={handleGameNameChange}
-        autoComplete="off"
-        selectTextOnFocus={true}
-      />
-
-      <View style={styles.controlsContainer}>
-        <TouchableOpacity 
-          style={[styles.controlButton, styles.addButton]} 
-          onPress={addPlayer}
-        >
-          <Text style={styles.controlButtonText}>➕ Add Player</Text>
-        </TouchableOpacity>
-        
-        {!isRunning ? (
-          <TouchableOpacity 
-            style={[styles.controlButton, styles.playButton, activePlayerId === null && styles.disabledButton]} 
-            onPress={resumeGame}
-            disabled={activePlayerId === null}
-          >
-            <Text style={styles.controlButtonText}>
-              ▶️ {gameStarted ? 'Resume' : 'Start'}
-            </Text>
-          </TouchableOpacity>
-        ) : (
-          <TouchableOpacity 
-            style={[styles.controlButton, styles.pauseButton]} 
-            onPress={pauseGame}
-          >
-            <Text style={styles.controlButtonText}>⏸️ Pause</Text>
-          </TouchableOpacity>
-        )}
-        
-        {gameStarted && (
-          <>
-            <TouchableOpacity 
-              style={[styles.controlButton, styles.nextButton]} 
-              onPress={nextPlayer}
-            >
-              <Text style={styles.controlButtonText}>⏭️ Next</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.controlButton, styles.saveButton]} onPress={saveGame}>
-              <Text style={styles.controlButtonText}>💾 Save</Text>
-            </TouchableOpacity>
-          </>
-        )}
-        
-        <TouchableOpacity 
-          style={[styles.controlButton, styles.resetButton]} 
-          onPress={resetGame}
-        >
-          <Text style={styles.controlButtonText}>🔄 Reset</Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={[styles.playersGrid, { 
-        flexDirection: getPlayerGridCols() === 1 ? 'column' : 'row',
-        flexWrap: getPlayerGridCols() > 1 ? 'wrap' : 'nowrap'
-      }]}>
-        {players.map((player) => {
-          return (
-            <View
-              key={player.id}
-              style={[
-                styles.playerCard,
-                { 
-                  backgroundColor: player.color + '30', 
-                  borderColor: player.color,
-                  borderWidth: player.isActive ? 4 : 2,
-                },
-                player.isActive && { backgroundColor: player.color + '40' },
-                getPlayerGridCols() > 1 && { 
-                  width: getPlayerGridCols() === 2 ? '48%' : '31%',
-                  marginBottom: 8
-                }
-              ]}
-            >
-              <View style={styles.playerHeader}>
-                <TextInput
-                  key={`player-name-${player.id}`}
-                  style={styles.playerNameInput}
-                  value={player.name}
-                  onChangeText={handlePlayerNameChange(player.id)}
-                  autoComplete="off"
-                  selectTextOnFocus={true}
-                  editable={true}
-                />
-                <View style={styles.playerControls}>
-                  <TouchableOpacity 
-                    style={[styles.colorButton, { backgroundColor: player.color }]}
-                    onPress={() => setShowColorPicker(showColorPicker === player.id ? null : player.id)}
-                  >
-                    <Text style={styles.colorButtonText}>🎨</Text>
-                  </TouchableOpacity>
-                  {players.length > 2 && (
-                    <TouchableOpacity 
-                      onPress={() => removePlayer(player.id)}
-                    >
-                      <Text style={styles.removeButton}>❌</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              </View>
-              
-              {showColorPicker === player.id && (
-                <View style={styles.colorPicker}>
-                  <Text style={styles.colorPickerTitle}>Choose Color:</Text>
-                  <View style={styles.colorGrid}>
-                    {PLAYER_COLORS.map((color, index) => (
-                      <TouchableOpacity
-                        key={index}
-                        style={[
-                          styles.colorOption,
-                          { backgroundColor: color.value },
-                          player.color === color.value && styles.selectedColor
-                        ]}
-                        onPress={() => {
-                          updatePlayerColor(player.id, color.value);
-                          setShowColorPicker(null);
-                        }}
-                      >
-                        {player.color === color.value && (
-                          <Text style={styles.selectedColorCheck}>✓</Text>
-                        )}
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                </View>
-              )}
-              
-              <View style={styles.timeContainer}>
-                <Text style={[
-                  styles.timeDisplay,
-                  timerMode === 'countdown' && player.time <= 60 && styles.urgentTime
-                ]}>
-                  {formatTime(player.time)}
-                </Text>
-                {timerMode === 'countdown' && player.time <= 60 && player.time > 0 && (
-                  <Text style={styles.urgentText}>TIME RUNNING OUT!</Text>
-                )}
-                
-                <View style={styles.playerStats}>
-                  <Text style={styles.statText}>
-                    🎯 Turns: {player.turns || 0}
-                  </Text>
-                  <Text style={styles.statText}>
-                    ⏱️ Avg: {formatTime(getAverageTurnTime(player))}
-                  </Text>
-                </View>
-              </View>
-              
-              <TouchableOpacity
-                style={[
-                  styles.playerButton,
-                  { 
-                    backgroundColor: player.isActive && isRunning ? player.color : player.color + '80',
-                    borderColor: player.color,
-                    borderWidth: 2
-                  }
-                ]}
-                onPress={() => startPlayerTurn(player.id)}
-                disabled={player.isActive && isRunning}
-              >
-                <Text style={[
-                  styles.playerButtonText,
-                  { color: player.isActive && isRunning ? '#ffffff' : '#ffffff' }
-                ]}>
-                  {player.isActive && isRunning ? '⏸️ Active Turn' : '▶️ Start Turn'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          );
-        })}
-      </View>
-
-      {gameStarted && (
-        <View style={styles.statsContainer}>
-          <Text style={styles.statsTitle}>📊 Game Statistics</Text>
-          <View style={styles.statsGrid}>
-            <View style={styles.statItem}>
-              <Text style={styles.statLabel}>Total Time</Text>
-              <Text style={styles.statValue}>
-                {formatTime(players.reduce((sum, p) => sum + p.time, 0))}
-              </Text>
-            </View>
-            <View style={styles.statItem}>
-              <Text style={styles.statLabel}>Active Player</Text>
-              <Text style={styles.statValue}>
-                {activePlayerId ? players.find(p => p.id === activePlayerId)?.name : 'None'}
-              </Text>
-            </View>
-            <View style={styles.statItem}>
-              <Text style={styles.statLabel}>Players</Text>
-              <Text style={styles.statValue}>{players.length}</Text>
-            </View>
-          </View>
-        </View>
-      )}
-    </View>
-  );
 
   return (
     <View style={styles.app}>
@@ -974,7 +1005,39 @@ const BoardGameTimer = () => {
           setShowSettings={setShowSettings}
         />
       )}
-      {currentScreen === 'game' && <GameScreen />}
+      {currentScreen === 'game' && (
+        <GameScreen 
+          gameId={gameId}
+          firebase={firebase}
+          connectionStatus={connectionStatus}
+          shareGame={shareGame}
+          setShowSettings={setShowSettings}
+          setCurrentScreen={setCurrentScreen}
+          currentGameName={currentGameName}
+          handleGameNameChange={handleGameNameChange}
+          addPlayer={addPlayer}
+          isRunning={isRunning}
+          activePlayerId={activePlayerId}
+          resumeGame={resumeGame}
+          gameStarted={gameStarted}
+          pauseGame={pauseGame}
+          nextPlayer={nextPlayer}
+          saveGame={saveGame}
+          resetGame={resetGame}
+          players={players}
+          getPlayerGridCols={getPlayerGridCols}
+          showColorPicker={showColorPicker}
+          setShowColorPicker={setShowColorPicker}
+          handlePlayerNameChange={handlePlayerNameChange}
+          removePlayer={removePlayer}
+          PLAYER_COLORS={PLAYER_COLORS}
+          updatePlayerColor={updatePlayerColor}
+          timerMode={timerMode}
+          formatTime={formatTime}
+          getAverageTurnTime={getAverageTurnTime}
+          startPlayerTurn={startPlayerTurn}
+        />
+      )}
       {currentScreen === 'history' && (
         <GameHistoryScreen 
           gameHistory={gameHistory}
