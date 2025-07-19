@@ -1,7 +1,951 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Alert } from 'react-native';
 
-//Code below
+// Firebase configuration and initialization
+let firebase = null;
+let database = null;
+
+try {
+  // Import Firebase functions
+  const { initializeApp } = require('firebase/app');
+  const { getDatabase, ref, set, update, onValue, get, off } = require('firebase/database');
+  
+  // Your Firebase configuration
+  const firebaseConfig = {
+    apiKey: "AIzaSyDvUsG3RjdSUH_oDlj9SO5HC5-4onfhV8k",
+    authDomain: "bgtimer-fa2c3.firebaseapp.com",
+    databaseURL: "https://bgtimer-fa2c3-default-rtdb.europe-west1.firebasedatabase.app",
+    projectId: "bgtimer-fa2c3",
+    storageBucket: "bgtimer-fa2c3.firebasestorage.app",
+    messagingSenderId: "937157472924",
+    appId: "1:937157472924:web:5ff1c2c4ccfc3bcd8c7359",
+    measurementId: "G-H1NMZLJV74"
+  };
+
+  // Initialize Firebase
+  const app = initializeApp(firebaseConfig);
+  database = getDatabase(app);
+  firebase = { app, database, ref, set, update, onValue, get, off };
+  console.log('🔥 Firebase initialized successfully');
+} catch (error) {
+  console.log('Firebase not available, running in local mode:', error);
+}
+
+// 20 selectable player colors
+const PLAYER_COLORS = [
+  { name: 'Black', value: '#2D3748' },
+  { name: 'Red', value: '#E53E3E' },
+  { name: 'Green', value: '#38A169' },
+  { name: 'Yellow', value: '#D69E2E' },
+  { name: 'Purple', value: '#805AD5' },
+  { name: 'Blue', value: '#3182CE' },
+  { name: 'Orange', value: '#DD6B20' },
+  { name: 'Pink', value: '#D53F8C' },
+  { name: 'Teal', value: '#319795' },
+  { name: 'Cyan', value: '#0BC5EA' },
+  { name: 'Indigo', value: '#5A67D8' },
+  { name: 'Gray', value: '#718096' },
+  { name: 'Brown', value: '#8B4513' },
+  { name: 'Lime', value: '#84CC16' },
+  { name: 'Emerald', value: '#059669' },
+  { name: 'Sky', value: '#0EA5E9' },
+  { name: 'Violet', value: '#8B5CF6' },
+  { name: 'Rose', value: '#F43F5E' },
+  { name: 'Amber', value: '#F59E0B' },
+  { name: 'White', value: '#F7FAFC' }
+];
+
+// Auto-sizing logic that ensures no scrolling
+const getOptimalLayout = (playerCount) => {
+  if (playerCount <= 1) return { cols: 1, size: 'large' };
+  if (playerCount === 2) return { cols: 2, size: 'large' };
+  if (playerCount <= 4) return { cols: 2, size: 'medium' };
+  if (playerCount <= 6) return { cols: 3, size: 'small' };
+  if (playerCount <= 9) return { cols: 3, size: 'compact' };
+  return { cols: 4, size: 'compact' }; // For 10+ players
+};
+
+const BoardGameTimer = () => {
+  const [currentScreen, setCurrentScreen] = useState('home');
+  const [testInput, setTestInput] = useState('Type here to test');
+  const [players, setPlayers] = useState([
+    { id: 1, name: 'Player 1', time: 0, isActive: false, color: PLAYER_COLORS[0].value, turns: 0, totalTurnTime: 0, turnStartTime: null },
+    { id: 2, name: 'Player 2', time: 0, isActive: false, color: PLAYER_COLORS[1].value, turns: 0, totalTurnTime: 0, turnStartTime: null }
+  ]);
+  const [activePlayerId, setActivePlayerId] = useState(null);
+  const [isRunning, setIsRunning] = useState(false);
+  const [gameStarted, setGameStarted] = useState(false);
+  const [timerMode, setTimerMode] = useState('countup');
+  const [initialTime, setInitialTime] = useState(600);
+  const [gameHistory, setGameHistory] = useState([]);
+  const [currentGameName, setCurrentGameName] = useState('');
+  const [gameId, setGameId] = useState('');
+  const [joinGameId, setJoinGameId] = useState('');
+  const [isHost, setIsHost] = useState(false);
+  const [connectedPlayers, setConnectedPlayers] = useState([]);
+  const [isOnline, setIsOnline] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState('offline');
+  const [playerBoxSize, setPlayerBoxSize] = useState('auto');
+  const [theme, setTheme] = useState('dark');
+  const [playTurnSounds, setPlayTurnSounds] = useState(true);
+  const [showSettings, setShowSettings] = useState(false);
+  
+  const [showColorPicker, setShowColorPicker] = useState(null);
+  
+  const intervalRef = useRef();
+  const gameRef = useRef(null);
+  const playerId = useRef(`player_${Date.now()}_${Math.random().toString(36).substring(2)}`);
+  const gameNameDebounceRef = useRef();
+  const joinGameIdDebounceRef = useRef();
+  const playerNameDebounceRefs = useRef({});
+
+  // Timer effect
+  useEffect(() => {
+    if (isRunning && activePlayerId !== null) {
+      intervalRef.current = setInterval(() => {
+        setPlayers(prev => prev.map(player => {
+          if (player.id === activePlayerId) {
+            const newTime = timerMode === 'countup' 
+              ? player.time + 1 
+              : Math.max(0, player.time - 1);
+            return { ...player, time: newTime };
+          }
+          return player;
+        }));
+      }, 1000);
+    } else {
+      clearInterval(intervalRef.current);
+    }
+
+    return () => clearInterval(intervalRef.current);
+  }, [isRunning, activePlayerId, timerMode]);
+
+
+  // Firebase game state sync effect (immediate for game controls, debounced only for text)
+  useEffect(() => {
+    if (firebase && gameId && isHost) {
+      syncGameStateToFirebase();
+    }
+  }, [players, activePlayerId, isRunning, gameStarted, timerMode, initialTime]);
+
+  // Separate debounced sync for text changes only
+  useEffect(() => {
+    if (firebase && gameId && isHost) {
+      const timeoutId = setTimeout(() => {
+        syncGameStateToFirebase();
+      }, 1500); // Only debounce text changes
+
+      return () => clearTimeout(timeoutId);
+    }
+  }, [currentGameName]);
+
+  // Firebase listener effect
+  useEffect(() => {
+    if (firebase && gameId) {
+      const unsubscribe = listenToGameChanges();
+      syncPlayerJoin();
+      
+      return () => {
+        if (unsubscribe) {
+          firebase.off(unsubscribe);
+        }
+      };
+    }
+  }, [gameId]);
+
+  const formatTime = (seconds) => {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+    
+    if (hours > 0) {
+      return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    }
+    return `${minutes}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const generateGameId = () => {
+    return Math.random().toString(36).substring(2, 8).toUpperCase();
+  };
+
+  const createNewGame = async () => {
+    const newGameId = generateGameId();
+    setGameId(newGameId);
+    setIsHost(true);
+    setCurrentScreen('game');
+    resetGame();
+    
+    if (firebase) {
+      setConnectionStatus('connecting');
+      Alert.alert('Game Created!', `Game ID: ${newGameId}\n🔥 Firebase multiplayer enabled!`);
+    } else {
+      Alert.alert('Game Created!', `Game ID: ${newGameId}\n📱 Running in local mode.`);
+    }
+  };
+
+  const joinGame = async () => {
+    if (!joinGameId.trim()) return;
+    
+    const gameIdToJoin = joinGameId.trim().toUpperCase();
+    setGameId(gameIdToJoin);
+    setIsHost(false);
+    setCurrentScreen('game');
+    
+    if (firebase) {
+      setConnectionStatus('connecting');
+      
+      // Try to load existing game data
+      try {
+        const gameRef = firebase.ref(firebase.database, `games/${gameIdToJoin}`);
+        const snapshot = await firebase.get(gameRef);
+        
+        if (snapshot.exists()) {
+          Alert.alert('Joined Game!', `🔥 Connected to multiplayer game: ${gameIdToJoin}`);
+        } else {
+          Alert.alert('Joined Game!', `🔥 Firebase enabled for game: ${gameIdToJoin}`);
+        }
+      } catch (error) {
+        console.log('Error loading game:', error);
+        Alert.alert('Joined Game!', `🔥 Firebase enabled for game: ${gameIdToJoin}`);
+      }
+    } else {
+      Alert.alert('Joined Game!', `📱 Playing locally with ID: ${gameIdToJoin}`);
+    }
+  };
+
+  const shareGame = async () => {
+    if (gameId) {
+      try {
+        if (navigator.clipboard) {
+          await navigator.clipboard.writeText(gameId);
+          Alert.alert('Copied!', `Session ID "${gameId}" copied to clipboard`);
+        } else {
+          // Fallback for older browsers
+          const textArea = document.createElement('textarea');
+          textArea.value = gameId;
+          document.body.appendChild(textArea);
+          textArea.select();
+          document.execCommand('copy');
+          document.body.removeChild(textArea);
+          Alert.alert('Copied!', `Session ID "${gameId}" copied to clipboard`);
+        }
+      } catch (error) {
+        console.log('Copy failed:', error);
+        const modeText = firebase && isOnline 
+          ? '🔥 Multiplayer enabled with Firebase!'
+          : '📱 Running in local mode.';
+        const shareText = `Game ID: ${gameId}\n\n${modeText}`;
+        Alert.alert('Share Game', shareText);
+      }
+    }
+  };
+
+  const addPlayer = () => {
+    const newId = Math.max(...players.map(p => p.id)) + 1;
+    const newPlayer = {
+      id: newId,
+      name: `Player ${newId}`,
+      time: timerMode === 'countdown' ? initialTime : 0,
+      isActive: false,
+      color: getNextPlayerColor(),
+      turns: 0,
+      totalTurnTime: 0,
+      turnStartTime: null
+    };
+    setPlayers([...players, newPlayer]);
+  };
+
+  const removePlayer = (id) => {
+    if (players.length > 2) {
+      setPlayers(players.filter(p => p.id !== id));
+      if (activePlayerId === id) {
+        setActivePlayerId(null);
+        setIsRunning(false);
+      }
+    }
+  };
+
+  const updatePlayerName = (id, name) => {
+    setPlayers(prev => prev.map(player => 
+      player.id === id ? { ...player, name } : player
+    ));
+  };
+
+
+  // Firebase sync functions with local fallback
+  const syncGameStateToFirebase = async () => {
+    if (!gameId) return;
+    
+    const gameData = {
+      players,
+      activePlayerId,
+      isRunning,
+      gameStarted,
+      timerMode,
+      initialTime,
+      currentGameName,
+      lastUpdated: Date.now(),
+      hostId: playerId.current
+    };
+
+    if (firebase && firebase.database) {
+      try {
+        await firebase.set(firebase.ref(firebase.database, `games/${gameId}`), gameData);
+        setConnectionStatus('connected');
+        setIsOnline(true);
+        return;
+      } catch (error) {
+        console.log('Firebase sync error, falling back to local mode:', error);
+        setConnectionStatus('error');
+        setIsOnline(false);
+      }
+    }
+    
+    // Local mode fallback - store in localStorage
+    try {
+      localStorage.setItem(`game_${gameId}`, JSON.stringify(gameData));
+      setConnectionStatus('local');
+    } catch (error) {
+      console.log('Local storage error:', error);
+      setConnectionStatus('offline');
+    }
+  };
+
+  const listenToGameChanges = () => {
+    if (!firebase || !firebase.database || !gameId) return;
+
+    const gameRef = firebase.ref(firebase.database, `games/${gameId}`);
+    
+    const unsubscribe = firebase.onValue(gameRef, (snapshot) => {
+      const data = snapshot.val();
+      if (data && data.lastUpdated) {
+        // Only update if this change came from another player
+        if (data.hostId !== playerId.current) {
+          setPlayers(data.players || []);
+          setActivePlayerId(data.activePlayerId);
+          setIsRunning(data.isRunning || false);
+          setGameStarted(data.gameStarted || false);
+          setTimerMode(data.timerMode || 'countup');
+          setInitialTime(data.initialTime || 600);
+          setCurrentGameName(data.currentGameName || '');
+          setTempGameName(data.currentGameName || '');
+          
+          // Update temp player names
+          const newTempNames = {};
+          data.players?.forEach(player => {
+            newTempNames[player.id] = player.name;
+          });
+          setTempPlayerNames(newTempNames);
+        }
+        setConnectionStatus('connected');
+        setIsOnline(true);
+      }
+    });
+
+    return unsubscribe;
+  };
+
+  const syncPlayerJoin = async () => {
+    if (!firebase || !firebase.database || !gameId) return;
+
+    try {
+      const playerRef = firebase.ref(firebase.database, `games/${gameId}/connectedPlayers/${playerId.current}`);
+      await firebase.set(playerRef, {
+        id: playerId.current,
+        joinedAt: Date.now(),
+        isActive: true
+      });
+    } catch (error) {
+      console.log('Player join sync error:', error);
+    }
+  };
+
+  const startPlayerTurn = (newPlayerId) => {
+    const currentTime = Date.now();
+    
+    setPlayers(prev => prev.map(player => {
+      if (player.id === activePlayerId && player.isActive && activePlayerId !== newPlayerId) {
+        // End current player's turn and record statistics
+        const turnDuration = player.turnStartTime ? currentTime - player.turnStartTime : 0;
+        return {
+          ...player,
+          isActive: false,
+          turns: (player.turns || 0) + 1,
+          totalTurnTime: (player.totalTurnTime || 0) + turnDuration,
+          turnStartTime: null
+        };
+      } else if (player.id === newPlayerId) {
+        // Start new player's turn (don't increment turn count yet - wait until turn ends)
+        return {
+          ...player,
+          isActive: true,
+          turnStartTime: currentTime
+        };
+      }
+      return { ...player, isActive: false };
+    }));
+    
+    setActivePlayerId(newPlayerId);
+    setIsRunning(true);
+    setGameStarted(true);
+  };
+
+  const pauseGame = () => {
+    // End current player's turn when pausing
+    if (activePlayerId) {
+      const currentTime = Date.now();
+      setPlayers(prev => prev.map(player => {
+        if (player.id === activePlayerId && player.isActive) {
+          const turnDuration = player.turnStartTime ? currentTime - player.turnStartTime : 0;
+          return {
+            ...player,
+            isActive: false,
+            turns: (player.turns || 0) + 1,
+            totalTurnTime: (player.totalTurnTime || 0) + turnDuration,
+            turnStartTime: null
+          };
+        }
+        return player;
+      }));
+    }
+    setIsRunning(false);
+    setActivePlayerId(null);
+  };
+  
+  const resumeGame = () => { if (activePlayerId !== null) setIsRunning(true); };
+
+  const nextPlayer = () => {
+    const currentIndex = players.findIndex(p => p.id === activePlayerId);
+    const nextIndex = (currentIndex + 1) % players.length;
+    const nextPlayerId = players[nextIndex].id;
+    startPlayerTurn(nextPlayerId);
+  };
+
+  const resetGame = () => {
+    setIsRunning(false);
+    setActivePlayerId(null);
+    setGameStarted(false);
+    const resetTime = timerMode === 'countdown' ? initialTime : 0;
+    setPlayers(prev => prev.map(player => ({
+      ...player,
+      time: resetTime,
+      isActive: false,
+      turns: 0,
+      totalTurnTime: 0,
+      turnStartTime: null
+    })));
+  };
+
+  const saveGame = () => {
+    if (!gameStarted) return;
+    
+    const gameData = {
+      id: Date.now(),
+      name: currentGameName || `Game ${new Date().toLocaleDateString()}`,
+      date: new Date().toISOString(),
+      players: players.map(p => ({
+        name: p.name,
+        time: p.time,
+        formattedTime: formatTime(p.time),
+        color: p.color
+      })),
+      timerMode,
+      totalTime: players.reduce((sum, p) => sum + p.time, 0)
+    };
+    
+    setGameHistory(prev => [gameData, ...prev]);
+    Alert.alert('Success', 'Game saved successfully!');
+  };
+
+  const getNextPlayerColor = () => {
+    const usedColors = new Set(players.map(p => p.color));
+    const availableColor = PLAYER_COLORS.find(color => !usedColors.has(color.value));
+    return availableColor ? availableColor.value : PLAYER_COLORS[0].value;
+  };
+
+  const updatePlayerColor = (playerId, color) => {
+    setPlayers(prev => prev.map(player => 
+      player.id === playerId ? { ...player, color } : player
+    ));
+  };
+
+
+  const getAverageTurnTime = (player) => {
+    if (player.turns === 0) return 0;
+    return Math.round(player.totalTurnTime / player.turns / 1000); // in seconds
+  };
+
+  const getPlayerBoxSize = () => {
+    if (playerBoxSize === 'auto') {
+      const layout = getOptimalLayout(players.length);
+      return layout.size.charAt(0).toUpperCase() + layout.size.slice(1);
+    }
+    return playerBoxSize.charAt(0).toUpperCase() + playerBoxSize.slice(1);
+  };
+
+  const getPlayerGridCols = () => {
+    if (playerBoxSize === 'auto') {
+      return getOptimalLayout(players.length).cols;
+    }
+    
+    const size = getPlayerBoxSize().toLowerCase();
+    if (size === 'large') return players.length === 1 ? 1 : 2;
+    if (size === 'medium') return 2;
+    if (size === 'small') return 3;
+    return 4; // compact
+  };
+
+  // Screen Components
+  const HomeScreen = () => (
+    <ScrollView contentContainerStyle={[styles.container, theme === 'light' && styles.lightContainer]}>
+      <View style={styles.header}>
+        <Text style={[styles.title, theme === 'light' && styles.lightText]}>🎲 Board Game Timer</Text>
+        <Text style={[styles.subtitle, theme === 'light' && styles.lightSubtext]}>Track time for every player in your board games</Text>
+        <Text style={styles.localStatus}>
+          {firebase ? '🔥 Firebase Ready' : '📱 Local Mode'}
+        </Text>
+      </View>
+
+      <View style={styles.buttonContainer}>
+        <TouchableOpacity 
+          style={[styles.button, styles.primaryButton, styles.buttonWithFeedback]} 
+          onPress={createNewGame}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.buttonText}>🎮 Create New Game</Text>
+        </TouchableOpacity>
+        
+        <TouchableOpacity 
+          style={[styles.button, styles.secondaryButton, styles.buttonWithFeedback]} 
+          onPress={() => setCurrentScreen('join')}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.buttonText}>📱 Join Existing Game</Text>
+        </TouchableOpacity>
+        
+        <TouchableOpacity 
+          style={[styles.button, styles.tertiaryButton, styles.buttonWithFeedback]} 
+          onPress={() => setCurrentScreen('history')}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.buttonText}>🏆 Game History</Text>
+        </TouchableOpacity>
+        
+        <TouchableOpacity 
+          style={[styles.button, styles.settingsButton, styles.buttonWithFeedback]} 
+          onPress={() => setShowSettings(true)}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.buttonText}>⚙️ Settings</Text>
+        </TouchableOpacity>
+      </View>
+
+      {gameHistory.length > 0 && (
+        <View style={[styles.recentGames, theme === 'light' && styles.lightCard]}>
+          <Text style={[styles.sectionTitle, theme === 'light' && styles.lightText]}>Recent Games</Text>
+          {gameHistory.slice(0, 3).map(game => (
+            <View key={game.id} style={styles.gameHistoryItem}>
+              <Text style={[styles.gameName, theme === 'light' && styles.lightText]}>{game.name}</Text>
+              <Text style={[styles.gameDate, theme === 'light' && styles.lightSubtext]}>{new Date(game.date).toLocaleDateString()}</Text>
+            </View>
+          ))}
+        </View>
+      )}
+    </ScrollView>
+  );
+
+  const JoinGameScreen = () => (
+    <ScrollView contentContainerStyle={styles.container}>
+      <View style={styles.header}>
+        <Text style={styles.title}>📱 Join Game</Text>
+        <Text style={styles.subtitle}>Enter the 6-character game ID to join</Text>
+      </View>
+
+      <View style={styles.inputContainer}>
+        <TextInput
+          style={styles.input}
+          placeholder="Enter Game ID (e.g. ABC123)"
+          placeholderTextColor="#999"
+          value={joinGameId}
+          onChangeText={(text) => setJoinGameId(text.toUpperCase())}
+          maxLength={6}
+          autoCapitalize="characters"
+          autoComplete="off"
+          selectTextOnFocus={true}
+        />
+        
+        <TouchableOpacity 
+          style={[styles.button, styles.primaryButton, !joinGameId.trim() && styles.disabledButton]} 
+          onPress={joinGame}
+          disabled={!joinGameId.trim()}
+        >
+          <Text style={styles.buttonText}>Join Game</Text>
+        </TouchableOpacity>
+        
+        <TouchableOpacity style={[styles.button, styles.secondaryButton]} onPress={() => setCurrentScreen('home')}>
+          <Text style={styles.buttonText}>Back to Home</Text>
+        </TouchableOpacity>
+      </View>
+    </ScrollView>
+  );
+
+  const GameHistoryScreen = () => (
+    <ScrollView contentContainerStyle={styles.container}>
+      <View style={styles.headerRow}>
+        <Text style={styles.title}>🏆 Game History</Text>
+        <TouchableOpacity style={styles.backButton} onPress={() => setCurrentScreen('home')}>
+          <Text style={styles.backButtonText}>🏠 Home</Text>
+        </TouchableOpacity>
+      </View>
+
+      {gameHistory.length === 0 ? (
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyTitle}>No games saved yet</Text>
+          <Text style={styles.emptySubtitle}>Play a game and save it to see it here!</Text>
+        </View>
+      ) : (
+        <View style={styles.historyList}>
+          {gameHistory.map(game => (
+            <View key={game.id} style={styles.historyCard}>
+              <View style={styles.historyHeader}>
+                <Text style={styles.historyGameName}>{game.name}</Text>
+                <Text style={styles.historyDate}>{new Date(game.date).toLocaleDateString()}</Text>
+              </View>
+              
+              <Text style={styles.historyTotal}>Total Time: {formatTime(game.totalTime)}</Text>
+              
+              <View style={styles.historyPlayers}>
+                {game.players.map((player, idx) => (
+                  <Text key={idx} style={styles.historyPlayer}>
+                    {player.name}: {player.formattedTime}
+                  </Text>
+                ))}
+              </View>
+            </View>
+          ))}
+        </View>
+      )}
+    </ScrollView>
+  );
+
+  const GameScreen = () => (
+    <ScrollView contentContainerStyle={styles.container}>
+
+      <View style={styles.headerRow}>
+        <View>
+          <Text style={styles.title}>
+            {gameId ? `Game: ${gameId}` : '🎲 Board Game Timer'}
+          </Text>
+          {firebase && gameId && (
+            <Text style={[
+              styles.connectionStatus,
+              connectionStatus === 'connected' && styles.connectedStatus,
+              connectionStatus === 'connecting' && styles.connectingStatus,
+              connectionStatus === 'error' && styles.errorStatus
+            ]}>
+              {connectionStatus === 'connected' && '🔥 Connected'}
+              {connectionStatus === 'connecting' && '⏳ Connecting...'}
+              {connectionStatus === 'error' && '❌ Connection Error'}
+              {connectionStatus === 'local' && '💾 Local Mode'}
+              {connectionStatus === 'offline' && '📱 Offline'}
+            </Text>
+          )}
+        </View>
+        <View style={styles.headerButtons}>
+          {gameId && (
+            <TouchableOpacity style={styles.shareButton} onPress={shareGame}>
+              <Text style={styles.shareButtonText}>📤 Share</Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity style={styles.settingsIconButton} onPress={() => setShowSettings(true)}>
+            <Text style={styles.settingsIconText}>⚙️</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.backButton} onPress={() => setCurrentScreen('home')}>
+            <Text style={styles.backButtonText}>🏠</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      <TextInput
+        style={styles.gameNameInput}
+        placeholder="Enter game name (optional)"
+        placeholderTextColor="#999"
+        value={currentGameName}
+        onChangeText={(text) => {
+          console.log('Game name changing:', text);
+          setCurrentGameName(text);
+        }}
+        autoComplete="off"
+        selectTextOnFocus={true}
+      />
+
+      <View style={styles.controlsContainer}>
+        <TouchableOpacity 
+          style={[styles.controlButton, styles.addButton]} 
+          onPress={addPlayer}
+        >
+          <Text style={styles.controlButtonText}>➕ Add Player</Text>
+        </TouchableOpacity>
+        
+        {!isRunning ? (
+          <TouchableOpacity 
+            style={[styles.controlButton, styles.playButton, activePlayerId === null && styles.disabledButton]} 
+            onPress={resumeGame}
+            disabled={activePlayerId === null}
+          >
+            <Text style={styles.controlButtonText}>
+              ▶️ {gameStarted ? 'Resume' : 'Start'}
+            </Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity 
+            style={[styles.controlButton, styles.pauseButton]} 
+            onPress={pauseGame}
+          >
+            <Text style={styles.controlButtonText}>⏸️ Pause</Text>
+          </TouchableOpacity>
+        )}
+        
+        {gameStarted && (
+          <>
+            <TouchableOpacity 
+              style={[styles.controlButton, styles.nextButton]} 
+              onPress={nextPlayer}
+            >
+              <Text style={styles.controlButtonText}>⏭️ Next</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.controlButton, styles.saveButton]} onPress={saveGame}>
+              <Text style={styles.controlButtonText}>💾 Save</Text>
+            </TouchableOpacity>
+          </>
+        )}
+        
+        <TouchableOpacity 
+          style={[styles.controlButton, styles.resetButton]} 
+          onPress={resetGame}
+        >
+          <Text style={styles.controlButtonText}>🔄 Reset</Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={[styles.playersGrid, { 
+        flexDirection: getPlayerGridCols() === 1 ? 'column' : 'row',
+        flexWrap: getPlayerGridCols() > 1 ? 'wrap' : 'nowrap'
+      }]}>
+        {players.map((player) => {
+          return (
+            <View
+              key={player.id}
+              style={[
+                styles.playerCard,
+                { 
+                  backgroundColor: player.color + '30', 
+                  borderColor: player.color,
+                  borderWidth: player.isActive ? 4 : 2,
+                },
+                player.isActive && { backgroundColor: player.color + '40' },
+                getPlayerGridCols() > 1 && { 
+                  width: getPlayerGridCols() === 2 ? '48%' : '31%',
+                  marginBottom: 8
+                }
+              ]}
+            >
+              <View style={styles.playerHeader}>
+                <TextInput
+                  style={styles.playerNameInput}
+                  value={player.name}
+                  onChangeText={(text) => {
+                    console.log('Player name changing:', player.id, text);
+                    updatePlayerName(player.id, text);
+                  }}
+                  autoComplete="off"
+                  selectTextOnFocus={true}
+                  editable={true}
+                />
+                <View style={styles.playerControls}>
+                  <TouchableOpacity 
+                    style={[styles.colorButton, { backgroundColor: player.color }]}
+                    onPress={() => setShowColorPicker(showColorPicker === player.id ? null : player.id)}
+                  >
+                    <Text style={styles.colorButtonText}>🎨</Text>
+                  </TouchableOpacity>
+                  {players.length > 2 && (
+                    <TouchableOpacity 
+                      onPress={() => removePlayer(player.id)}
+                    >
+                      <Text style={styles.removeButton}>❌</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+              
+              {showColorPicker === player.id && (
+                <View style={styles.colorPicker}>
+                  <Text style={styles.colorPickerTitle}>Choose Color:</Text>
+                  <View style={styles.colorGrid}>
+                    {PLAYER_COLORS.map((color, index) => (
+                      <TouchableOpacity
+                        key={index}
+                        style={[
+                          styles.colorOption,
+                          { backgroundColor: color.value },
+                          player.color === color.value && styles.selectedColor
+                        ]}
+                        onPress={() => {
+                          updatePlayerColor(player.id, color.value);
+                          setShowColorPicker(null);
+                        }}
+                      >
+                        {player.color === color.value && (
+                          <Text style={styles.selectedColorCheck}>✓</Text>
+                        )}
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+              )}
+              
+              <View style={styles.timeContainer}>
+                <Text style={[
+                  styles.timeDisplay,
+                  timerMode === 'countdown' && player.time <= 60 && styles.urgentTime
+                ]}>
+                  {formatTime(player.time)}
+                </Text>
+                {timerMode === 'countdown' && player.time <= 60 && player.time > 0 && (
+                  <Text style={styles.urgentText}>TIME RUNNING OUT!</Text>
+                )}
+                
+                <View style={styles.playerStats}>
+                  <Text style={styles.statText}>
+                    🎯 Turns: {player.turns || 0}
+                  </Text>
+                  <Text style={styles.statText}>
+                    ⏱️ Avg: {formatTime(getAverageTurnTime(player))}
+                  </Text>
+                </View>
+              </View>
+              
+              <TouchableOpacity
+                style={[
+                  styles.playerButton,
+                  { 
+                    backgroundColor: player.isActive && isRunning ? player.color : player.color + '80',
+                    borderColor: player.color,
+                    borderWidth: 2
+                  }
+                ]}
+                onPress={() => startPlayerTurn(player.id)}
+                disabled={player.isActive && isRunning}
+              >
+                <Text style={[
+                  styles.playerButtonText,
+                  { color: player.isActive && isRunning ? '#ffffff' : '#ffffff' }
+                ]}>
+                  {player.isActive && isRunning ? '⏸️ Active Turn' : '▶️ Start Turn'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          );
+        })}
+      </View>
+
+      {gameStarted && (
+        <View style={styles.statsContainer}>
+          <Text style={styles.statsTitle}>📊 Game Statistics</Text>
+          <View style={styles.statsGrid}>
+            <View style={styles.statItem}>
+              <Text style={styles.statLabel}>Total Time</Text>
+              <Text style={styles.statValue}>
+                {formatTime(players.reduce((sum, p) => sum + p.time, 0))}
+              </Text>
+            </View>
+            <View style={styles.statItem}>
+              <Text style={styles.statLabel}>Active Player</Text>
+              <Text style={styles.statValue}>
+                {activePlayerId ? players.find(p => p.id === activePlayerId)?.name : 'None'}
+              </Text>
+            </View>
+            <View style={styles.statItem}>
+              <Text style={styles.statLabel}>Players</Text>
+              <Text style={styles.statValue}>{players.length}</Text>
+            </View>
+          </View>
+        </View>
+      )}
+    </ScrollView>
+  );
+
+  return (
+    <View style={styles.app}>
+
+      {/* Settings Modal */}
+      {showSettings && (
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>⚙️ Settings</Text>
+            
+            <View style={styles.settingSection}>
+              <Text style={styles.settingLabel}>Timer Mode</Text>
+              <View style={styles.settingOptions}>
+                <TouchableOpacity
+                  style={[
+                    styles.settingOption,
+                    timerMode === 'countup' && styles.settingOptionActive
+                  ]}
+                  onPress={() => setTimerMode('countup')}
+                >
+                  <Text style={[
+                    styles.settingOptionText,
+                    timerMode === 'countup' && styles.settingOptionTextActive
+                  ]}>Count Up</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.settingOption,
+                    timerMode === 'countdown' && styles.settingOptionActive
+                  ]}
+                  onPress={() => setTimerMode('countdown')}
+                >
+                  <Text style={[
+                    styles.settingOptionText,
+                    timerMode === 'countdown' && styles.settingOptionTextActive
+                  ]}>Count Down</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {timerMode === 'countdown' && (
+              <View style={styles.settingSection}>
+                <Text style={styles.settingLabel}>Initial Time (minutes)</Text>
+                <TextInput
+                  style={styles.settingInput}
+                  value={String(initialTime / 60)}
+                  onChangeText={(text) => setInitialTime(parseInt(text) * 60 || 600)}
+                  keyboardType="numeric"
+                  placeholder="10"
+                  placeholderTextColor="#999"
+                />
+              </View>
+            )}
+            
+            <TouchableOpacity
+              style={styles.modalCloseButton}
+              onPress={() => setShowSettings(false)}
+            >
+              <Text style={styles.modalCloseButtonText}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {currentScreen === 'home' && <HomeScreen />}
+      {currentScreen === 'game' && <GameScreen />}
+      {currentScreen === 'history' && <GameHistoryScreen />}
+      {currentScreen === 'join' && <JoinGameScreen />}
+    </View>
+  );
+};
 
 const styles = StyleSheet.create({
   app: {
@@ -12,7 +956,6 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     padding: 16,
     backgroundColor: '#1a1a2e',
-    minHeight: '100vh',
   },
   lightContainer: {
     backgroundColor: '#f8f9fa',
@@ -41,13 +984,6 @@ const styles = StyleSheet.create({
   lightSubtext: {
     color: '#718096',
   },
-  firebaseStatus: {
-    fontSize: 14,
-    color: '#10b981',
-    textAlign: 'center',
-    marginTop: 8,
-    fontWeight: '600',
-  },
   localStatus: {
     fontSize: 14,
     color: '#f59e0b',
@@ -69,10 +1005,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   buttonWithFeedback: {
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+    boxShadow: '0px 2px 4px rgba(0, 0, 0, 0.1)',
     elevation: 3,
   },
   primaryButton: {
@@ -172,19 +1105,40 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   connectionStatus: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 4,
-  },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginRight: 6,
-  },
-  statusText: {
     fontSize: 12,
-    fontWeight: '500',
+    textAlign: 'center',
+    marginTop: 4,
+    fontWeight: '600',
+  },
+  connectedStatus: {
+    color: '#10b981',
+  },
+  connectingStatus: {
+    color: '#f59e0b',
+  },
+  errorStatus: {
+    color: '#ef4444',
+  },
+  playerStats: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+    borderRadius: 4,
+  },
+  statText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'center',
+    textShadow: '1px 1px 2px #000000',
+  },
+  inputFocused: {
+    borderColor: '#3b82f6',
+    borderWidth: 2,
+    backgroundColor: 'rgba(59, 130, 246, 0.1)',
   },
   inputContainer: {
     width: '100%',
@@ -201,64 +1155,25 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     letterSpacing: 2,
     minHeight: 56,
-  },
-  infoBox: {
-    marginTop: 24,
-    padding: 16,
-    backgroundColor: 'rgba(59, 130, 246, 0.1)',
-    borderRadius: 12,
     borderWidth: 1,
-    borderColor: 'rgba(59, 130, 246, 0.3)',
-  },
-  infoTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#3b82f6',
-    marginBottom: 8,
-  },
-  infoText: {
-    fontSize: 14,
-    color: '#a0aec0',
-    marginBottom: 4,
-    lineHeight: 20,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+    outlineStyle: 'none',
+    cursor: 'text',
+    pointerEvents: 'auto',
   },
   gameNameInput: {
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
     color: '#ffffff',
     padding: 12,
     borderRadius: 8,
     fontSize: 16,
     marginBottom: 16,
     minHeight: 48,
-  },
-  roleIndicator: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 16,
-    padding: 8,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    borderRadius: 8,
-  },
-  roleText: {
-    fontSize: 12,
-    fontWeight: 'bold',
-    marginRight: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  hostRole: {
-    backgroundColor: '#3b82f6',
-    color: '#ffffff',
-  },
-  clientRole: {
-    backgroundColor: '#10b981',
-    color: '#ffffff',
-  },
-  roleDescription: {
-    fontSize: 12,
-    color: '#a0aec0',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+    outlineStyle: 'none',
+    cursor: 'text',
+    pointerEvents: 'auto',
   },
   controlsContainer: {
     flexDirection: 'row',
@@ -310,22 +1225,6 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255, 255, 255, 0.1)',
     minHeight: 160,
   },
-  playerCardLarge: {
-    padding: 20,
-    minHeight: 200,
-  },
-  playerCardMedium: {
-    padding: 16,
-    minHeight: 180,
-  },
-  playerCardSmall: {
-    padding: 12,
-    minHeight: 160,
-  },
-  playerCardCompact: {
-    padding: 10,
-    minHeight: 140,
-  },
   activePlayerCard: {
     borderColor: '#fbbf24',
     backgroundColor: 'rgba(251, 191, 36, 0.1)',
@@ -336,50 +1235,78 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 12,
   },
+  playerControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  colorButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+  },
+  colorButtonText: {
+    fontSize: 14,
+  },
+  colorPicker: {
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 12,
+  },
+  colorPickerTitle: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  colorGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  colorOption: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+  },
+  selectedColor: {
+    borderColor: '#ffffff',
+    borderWidth: 3,
+  },
+  selectedColorCheck: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: 'bold',
+    textShadow: '1px 1px 2px #000000',
+  },
   playerNameInput: {
     color: '#ffffff',
     fontSize: 16,
     fontWeight: '600',
     flex: 1,
-    padding: 4,
+    padding: 8,
     borderRadius: 4,
-  },
-  playerNameInputLarge: {
-    fontSize: 18,
-  },
-  playerNameInputMedium: {
-    fontSize: 16,
-  },
-  playerNameInputSmall: {
-    fontSize: 14,
-  },
-  playerNameInputCompact: {
-    fontSize: 12,
-  },
-  removeButtonContainer: {
-    padding: 4,
-    minWidth: 32,
-    minHeight: 32,
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.2)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+    minHeight: 36,
+    outlineStyle: 'none',
+    cursor: 'text',
+    pointerEvents: 'auto',
   },
   removeButton: {
     fontSize: 16,
-  },
-  removeButtonLarge: {
-    fontSize: 18,
-  },
-  removeButtonMedium: {
-    fontSize: 16,
-  },
-  removeButtonSmall: {
-    fontSize: 14,
-  },
-  removeButtonCompact: {
-    fontSize: 12,
-  },
-  disabledText: {
-    opacity: 0.3,
   },
   timeContainer: {
     alignItems: 'center',
@@ -394,18 +1321,6 @@ const styles = StyleSheet.create({
     fontFamily: 'monospace',
     textAlign: 'center',
   },
-  timeDisplayLarge: {
-    fontSize: 36,
-  },
-  timeDisplayMedium: {
-    fontSize: 28,
-  },
-  timeDisplaySmall: {
-    fontSize: 22,
-  },
-  timeDisplayCompact: {
-    fontSize: 18,
-  },
   urgentTime: {
     color: '#ef4444',
   },
@@ -416,18 +1331,6 @@ const styles = StyleSheet.create({
     marginTop: 4,
     textAlign: 'center',
   },
-  urgentTextLarge: {
-    fontSize: 14,
-  },
-  urgentTextMedium: {
-    fontSize: 12,
-  },
-  urgentTextSmall: {
-    fontSize: 10,
-  },
-  urgentTextCompact: {
-    fontSize: 8,
-  },
   playerButton: {
     backgroundColor: '#3b82f6',
     padding: 12,
@@ -436,38 +1339,10 @@ const styles = StyleSheet.create({
     minHeight: 44,
     justifyContent: 'center',
   },
-  playerButtonLarge: {
-    padding: 16,
-    minHeight: 48,
-  },
-  playerButtonMedium: {
-    padding: 12,
-    minHeight: 44,
-  },
-  playerButtonSmall: {
-    padding: 10,
-    minHeight: 40,
-  },
-  playerButtonCompact: {
-    padding: 8,
-    minHeight: 36,
-  },
   playerButtonText: {
     color: '#ffffff',
     fontWeight: '600',
     textAlign: 'center',
-  },
-  playerButtonTextLarge: {
-    fontSize: 16,
-  },
-  playerButtonTextMedium: {
-    fontSize: 14,
-  },
-  playerButtonTextSmall: {
-    fontSize: 12,
-  },
-  playerButtonTextCompact: {
-    fontSize: 10,
   },
   statsContainer: {
     marginTop: 20,
@@ -581,11 +1456,6 @@ const styles = StyleSheet.create({
     maxWidth: 400,
     maxHeight: '80%',
   },
-  lightModal: {
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.1)',
-  },
   modalTitle: {
     fontSize: 24,
     fontWeight: 'bold',
@@ -601,12 +1471,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#ffffff',
     marginBottom: 8,
-  },
-  settingDescription: {
-    fontSize: 12,
-    color: '#a0aec0',
-    marginTop: 4,
-    lineHeight: 16,
   },
   settingOptions: {
     flexDirection: 'row',
@@ -624,10 +1488,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  lightSettingOption: {
-    backgroundColor: 'rgba(0, 0, 0, 0.05)',
-    borderColor: 'rgba(0, 0, 0, 0.1)',
-  },
   settingOptionActive: {
     backgroundColor: '#3b82f6',
     borderColor: '#3b82f6',
@@ -642,29 +1502,6 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontWeight: '600',
   },
-  settingToggle: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 8,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.2)',
-    alignItems: 'center',
-    minHeight: 48,
-  },
-  settingToggleActive: {
-    backgroundColor: '#10b981',
-    borderColor: '#10b981',
-  },
-  settingToggleText: {
-    color: '#a0aec0',
-    fontSize: 16,
-    fontWeight: '500',
-  },
-  settingToggleTextActive: {
-    color: '#ffffff',
-    fontWeight: '600',
-  },
   settingInput: {
     backgroundColor: 'rgba(255, 255, 255, 0.1)',
     color: '#ffffff',
@@ -674,11 +1511,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.2)',
     minHeight: 48,
-  },
-  lightInput: {
-    backgroundColor: 'rgba(0, 0, 0, 0.05)',
-    borderColor: 'rgba(0, 0, 0, 0.1)',
-    color: '#2d3748',
   },
   modalCloseButton: {
     backgroundColor: '#10b981',
@@ -694,1117 +1526,5 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 });
-
-// Try different Firebase import approach
-let firebase: any = null;
-let database: any = null;
-
-try {
-  // Alternative Firebase import that should work better
-  const firebaseApp = require('firebase/app');
-  const firebaseDatabase = require('firebase/database');
-  
-  // Your Firebase configuration
-  const firebaseConfig = {
-    apiKey: "AIzaSyDvUsG3RjdSUH_oDlj9SO5HC5-4onfhV8k",
-    authDomain: "bgtimer-fa2c3.firebaseapp.com",
-    databaseURL: "https://bgtimer-fa2c3-default-rtdb.europe-west1.firebasedatabase.app",
-    projectId: "bgtimer-fa2c3",
-    storageBucket: "bgtimer-fa2c3.firebasestorage.app",
-    messagingSenderId: "937157472924",
-    appId: "1:937157472924:web:5ff1c2c4ccfc3bcd8c7359",
-    measurementId: "G-H1NMZLJV74"
-  };
-
-  // Initialize Firebase
-  const app = firebaseApp.initializeApp(firebaseConfig);
-  database = firebaseDatabase.getDatabase(app);
-  firebase = { app, database, ...firebaseDatabase };
-} catch (error) {
-  console.log('Firebase not available, running in local mode');
-}
-
-// Types
-interface Player {
-  id: number;
-  name: string;
-  time: number;
-  isActive: boolean;
-  color: string;
-}
-
-interface GameData {
-  id: number;
-  name: string;
-  date: string;
-  players: {
-    name: string;
-    time: number;
-    formattedTime: string;
-    color: string;
-  }[];
-  timerMode: string;
-  totalTime: number;
-  averageTurnTime: number;
-  longestTurn: number;
-  shortestTurn: number;
-}
-
-interface ConnectedPlayer {
-  id: string;
-  joinedAt: number;
-  lastSeen: number;
-}
-
-type PlayerBoxSize = 'auto' | 'large' | 'medium' | 'small' | 'compact';
-type TimerMode = 'countup' | 'countdown';
-type Screen = 'home' | 'game' | 'history' | 'join';
-type ConnectionStatus = 'offline' | 'connecting' | 'connected' | 'error';
-type Theme = 'dark' | 'light';
-
-// 50 distinct colors for players
-const PLAYER_COLORS = [
-  '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8', '#F7DC6F',
-  '#BB8FCE', '#85C1E9', '#F8C471', '#82E0AA', '#F1948A', '#85C1E9', '#F9E79F', '#D7BDE2',
-  '#A3E4D7', '#FAD7A0', '#D5A6BD', '#AED6F1', '#A9DFBF', '#F5B7B1', '#D2B4DE', '#A9CCE3',
-  '#ABEBC6', '#F9C74F', '#F8AD9D', '#C39BD3', '#7FB3D3', '#73C6B6', '#FFB347', '#DDA0DD',
-  '#87CEEB', '#98FB98', '#F0E68C', '#DDA0DD', '#FFB6C1', '#20B2AA', '#87CEFA', '#98FB98',
-  '#F5DEB3', '#FFB347', '#FF7F50', '#6495ED', '#9370DB', '#32CD32', '#FF6347', '#4682B4',
-  '#DC143C', '#00CED1'
-];
-
-// Auto-sizing logic that ensures no scrolling
-const getOptimalLayout = (playerCount: number) => {
-  if (playerCount <= 1) return { cols: 1, size: 'large' };
-  if (playerCount === 2) return { cols: 2, size: 'large' };
-  if (playerCount <= 4) return { cols: 2, size: 'medium' };
-  if (playerCount <= 6) return { cols: 3, size: 'small' };
-  if (playerCount <= 9) return { cols: 3, size: 'compact' };
-  return { cols: 4, size: 'compact' }; // For 10+ players
-};
-
-const BoardGameTimer = () => {
-  const [currentScreen, setCurrentScreen] = useState<Screen>('home');
-  const [players, setPlayers] = useState<Player[]>([
-    { id: 1, name: 'Player 1', time: 0, isActive: false, color: PLAYER_COLORS[0] },
-    { id: 2, name: 'Player 2', time: 0, isActive: false, color: PLAYER_COLORS[1] }
-  ]);
-  const [activePlayerId, setActivePlayerId] = useState<number | null>(null);
-  const [isRunning, setIsRunning] = useState<boolean>(false);
-  const [gameStarted, setGameStarted] = useState<boolean>(false);
-  const [timerMode, setTimerMode] = useState<TimerMode>('countup');
-  const [initialTime, setInitialTime] = useState<number>(600);
-  const [gameHistory, setGameHistory] = useState<GameData[]>([]);
-  const [currentGameName, setCurrentGameName] = useState<string>('');
-  const [localGameName, setLocalGameName] = useState<string>(''); // Local input state
-  const [localPlayerNames, setLocalPlayerNames] = useState<{[key: number]: string}>({}); // Local player name states
-  const [gameId, setGameId] = useState<string>('');
-  const [joinGameId, setJoinGameId] = useState<string>('');
-  const [isHost, setIsHost] = useState<boolean>(false);
-  const [connectedPlayers, setConnectedPlayers] = useState<ConnectedPlayer[]>([]);
-  const [isOnline, setIsOnline] = useState<boolean>(false);
-  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('offline');
-  const [playerBoxSize, setPlayerBoxSize] = useState<PlayerBoxSize>('auto');
-  const [theme, setTheme] = useState<Theme>('dark');
-  const [customTurnSound, setCustomTurnSound] = useState<string>('');
-  const [playTurnSounds, setPlayTurnSounds] = useState<boolean>(true);
-  const [showSettings, setShowSettings] = useState<boolean>(false);
-  const intervalRef = useRef<NodeJS.Timeout>();
-  const gameNameTimeoutRef = useRef<NodeJS.Timeout>();
-  const playerNameTimeouts = useRef<{[key: number]: NodeJS.Timeout}>({});
-  const gameRef = useRef<any>(null);
-  const playerId = useRef(`player_${Date.now()}_${Math.random().toString(36).substring(2)}`);
-
-  // Firebase sync effect
-  useEffect(() => {
-    if (gameId && isOnline && firebase && database) {
-      try {
-        gameRef.current = firebase.ref(database, `games/${gameId}`);
-        
-        // Listen for game state changes
-        const unsubscribe = firebase.onValue(gameRef.current, (snapshot: any) => {
-          const gameData = snapshot.val();
-          if (gameData && !isHost) {
-            // Only sync non-text data to avoid interference with typing
-            if (gameData.activePlayerId !== undefined) setActivePlayerId(gameData.activePlayerId);
-            if (gameData.isRunning !== undefined) setIsRunning(gameData.isRunning);
-            if (gameData.gameStarted !== undefined) setGameStarted(gameData.gameStarted);
-            if (gameData.timerMode) setTimerMode(gameData.timerMode);
-            
-            // Only update text fields if they're different and user isn't currently typing
-            if (gameData.gameName && gameData.gameName !== currentGameName) {
-              setCurrentGameName(gameData.gameName);
-            }
-            
-            // For players, be more careful about updates to preserve typing
-            if (gameData.players && JSON.stringify(gameData.players) !== JSON.stringify(players)) {
-              setPlayers(gameData.players);
-            }
-          }
-          
-          // Update connected players list
-          const connectedPlayersList: ConnectedPlayer[] = gameData?.connectedPlayers ? Object.values(gameData.connectedPlayers) : [];
-          setConnectedPlayers(connectedPlayersList);
-        });
-
-        // Add this player to connected players
-        const connectedPlayersRef = firebase.ref(database, `games/${gameId}/connectedPlayers/${playerId.current}`);
-        firebase.set(connectedPlayersRef, {
-          id: playerId.current,
-          joinedAt: Date.now(),
-          lastSeen: Date.now()
-        });
-
-        // Cleanup on unmount
-        return () => {
-          unsubscribe();
-          firebase.set(connectedPlayersRef, null); // Remove player from connected list
-        };
-      } catch (error) {
-        console.error('Firebase sync error:', error);
-      }
-    }
-  }, [gameId, isOnline, isHost]);
-
-  // Initialize local states when game data changes (but not during typing)
-  useEffect(() => {
-    setLocalGameName(currentGameName);
-    const newLocalNames: {[key: number]: string} = {};
-    players.forEach(player => {
-      newLocalNames[player.id] = player.name;
-    });
-    setLocalPlayerNames(newLocalNames);
-  }, [gameId]); // Only on game change, not on every update
-
-  // Debounced Firebase sync - exclude text fields that are being edited
-  const debounceTimerRef = useRef<NodeJS.Timeout>();
-  
-  useEffect(() => {
-    if (gameId && isHost && isOnline && gameRef.current && firebase) {
-      // Clear any existing timeout
-      clearTimeout(debounceTimerRef.current);
-      
-      // Debounce the Firebase update
-      debounceTimerRef.current = setTimeout(() => {
-        const gameState = {
-          players,
-          activePlayerId,
-          isRunning,
-          gameStarted,
-          timerMode,
-          initialTime,
-          gameName: currentGameName,
-          lastUpdated: Date.now(),
-          hostId: playerId.current
-        };
-        
-        firebase.update(gameRef.current, gameState).catch((error: any) => {
-          console.error('Error updating game state:', error);
-        });
-      }, 300); // Reduced to 300ms for faster non-text updates
-    }
-    
-    return () => clearTimeout(debounceTimerRef.current);
-  }, [players, activePlayerId, isRunning, gameStarted, currentGameName, gameId, isHost, isOnline]);
-
-  // Handle game name changes with proper debouncing
-  const handleGameNameChange = (newName: string) => {
-    setLocalGameName(newName);
-    
-    // Clear existing timeout
-    clearTimeout(gameNameTimeoutRef.current);
-    
-    // Set new timeout to commit the change
-    gameNameTimeoutRef.current = setTimeout(() => {
-      setCurrentGameName(newName);
-    }, 1000); // Wait 1 second after user stops typing
-  };
-
-  // Handle player name changes with proper debouncing
-  const handlePlayerNameChange = (playerId: number, newName: string) => {
-    setLocalPlayerNames(prev => ({
-      ...prev,
-      [playerId]: newName
-    }));
-    
-    // Clear existing timeout for this player
-    clearTimeout(playerNameTimeouts.current[playerId]);
-    
-    // Set new timeout to commit the change
-    playerNameTimeouts.current[playerId] = setTimeout(() => {
-      setPlayers(prev => prev.map(player => 
-        player.id === playerId ? { ...player, name: newName } : player
-      ));
-    }, 1000); // Wait 1 second after user stops typing
-  };
-
-  // Timer effect
-  useEffect(() => {
-    if (isRunning && activePlayerId !== null) {
-      intervalRef.current = setInterval(() => {
-        setPlayers(prev => prev.map(player => {
-          if (player.id === activePlayerId) {
-            const newTime = timerMode === 'countup' 
-              ? player.time + 1 
-              : Math.max(0, player.time - 1);
-            return { ...player, time: newTime };
-          }
-          return player;
-        }));
-      }, 1000);
-    } else {
-      clearInterval(intervalRef.current);
-    }
-
-    return () => clearInterval(intervalRef.current);
-  }, [isRunning, activePlayerId, timerMode]);
-
-  const formatTime = (seconds: number): string => {
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    const secs = seconds % 60;
-    
-    if (hours > 0) {
-      return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-    }
-    return `${minutes}:${secs.toString().padStart(2, '0')}`;
-  };
-
-  const generateGameId = (): string => {
-    return Math.random().toString(36).substring(2, 8).toUpperCase();
-  };
-
-  const createNewGame = async () => {
-    const newGameId = generateGameId();
-    setGameId(newGameId);
-    setIsHost(true);
-    setCurrentScreen('game');
-    resetGame();
-
-    if (firebase && database) {
-      setIsOnline(true);
-      setConnectionStatus('connecting');
-      
-      try {
-        // Create game in Firebase
-        const gameData = {
-          id: newGameId,
-          hostId: playerId.current,
-          createdAt: Date.now(),
-          players: players.map(p => ({ ...p, time: timerMode === 'countdown' ? initialTime : 0 })),
-          activePlayerId: null,
-          isRunning: false,
-          gameStarted: false,
-          timerMode,
-          initialTime,
-          gameName: '',
-          connectedPlayers: {}
-        };
-        
-        await firebase.set(firebase.ref(database, `games/${newGameId}`), gameData);
-        setConnectionStatus('connected');
-        Alert.alert('Game Created!', `Game ID: ${newGameId}\nShare this ID with other players to join.`);
-      } catch (error) {
-        console.error('Failed to create game:', error);
-        Alert.alert('Game Created!', `Game ID: ${newGameId}\nRunning in local mode.`);
-        setConnectionStatus('error');
-        setIsOnline(false);
-      }
-    } else {
-      Alert.alert('Game Created!', `Game ID: ${newGameId}\nRunning in local mode.`);
-    }
-  };
-
-  const joinGame = async () => {
-    if (!joinGameId.trim()) return;
-    
-    const gameIdToJoin = joinGameId.trim().toUpperCase();
-    setGameId(gameIdToJoin);
-    setIsHost(false);
-    setCurrentScreen('game');
-
-    if (firebase && database) {
-      setIsOnline(true);
-      setConnectionStatus('connecting');
-      
-      try {
-        // Check if game exists
-        const gameSnapshot = await firebase.get(firebase.ref(database, `games/${gameIdToJoin}`));
-        const gameData = gameSnapshot.val();
-        
-        if (gameData) {
-          // Join existing game
-          setPlayers(gameData.players || players);
-          setActivePlayerId(gameData.activePlayerId);
-          setIsRunning(gameData.isRunning || false);
-          setGameStarted(gameData.gameStarted || false);
-          setTimerMode(gameData.timerMode || 'countup');
-          setCurrentGameName(gameData.gameName || '');
-          setConnectionStatus('connected');
-          Alert.alert('Joined Game!', `Connected to game: ${gameIdToJoin}`);
-        } else {
-          throw new Error('Game not found');
-        }
-      } catch (error) {
-        console.error('Failed to join game:', error);
-        Alert.alert('Joined Game!', `Playing locally with ID: ${gameIdToJoin}`);
-        setConnectionStatus('error');
-        setIsOnline(false);
-      }
-    } else {
-      Alert.alert('Joined Game!', `Playing locally with ID: ${gameIdToJoin}`);
-    }
-  };
-
-  const shareGame = () => {
-    if (gameId) {
-      const shareText = isOnline 
-        ? `Game ID: ${gameId}\n\nShare this ID with other players so they can join your game!`
-        : `Game ID: ${gameId}\n\nNote: Running in local mode.`;
-      Alert.alert('Share Game', shareText);
-    }
-  };
-
-  const addPlayer = () => {
-    const newId = Math.max(...players.map(p => p.id)) + 1;
-    const newPlayer: Player = {
-      id: newId,
-      name: `Player ${newId}`,
-      time: timerMode === 'countdown' ? initialTime : 0,
-      isActive: false,
-      color: getNextPlayerColor()
-    };
-    setPlayers([...players, newPlayer]);
-  };
-
-  const removePlayer = (id: number) => {
-    if (players.length > 2) {
-      setPlayers(players.filter(p => p.id !== id));
-      if (activePlayerId === id) {
-        setActivePlayerId(null);
-        setIsRunning(false);
-      }
-    }
-  };
-
-  const updatePlayerName = (id: number, name: string) => {
-    // This is now handled by handlePlayerNameChange
-    handlePlayerNameChange(id, name);
-  };
-
-  const startPlayerTurn = (playerId: number) => {
-    setActivePlayerId(playerId);
-    setIsRunning(true);
-    setGameStarted(true);
-    setPlayers(prev => prev.map(player => ({
-      ...player,
-      isActive: player.id === playerId
-    })));
-    
-    // Play turn notification sound
-    playTurnNotification();
-  };
-
-  const pauseGame = () => setIsRunning(false);
-  const resumeGame = () => { if (activePlayerId !== null) setIsRunning(true); };
-
-  const nextPlayer = () => {
-    const currentIndex = players.findIndex(p => p.id === activePlayerId);
-    const nextIndex = (currentIndex + 1) % players.length;
-    const nextPlayerId = players[nextIndex].id;
-    startPlayerTurn(nextPlayerId);
-  };
-
-  const resetGame = () => {
-    setIsRunning(false);
-    setActivePlayerId(null);
-    setGameStarted(false);
-    const resetTime = timerMode === 'countdown' ? initialTime : 0;
-    setPlayers(prev => prev.map(player => ({
-      ...player,
-      time: resetTime,
-      isActive: false
-    })));
-  };
-
-  const saveGame = () => {
-    if (!gameStarted) return;
-    
-    const stats = calculateGameStats();
-    const gameData: GameData = {
-      id: Date.now(),
-      name: currentGameName || `Game ${new Date().toLocaleDateString()}`,
-      date: new Date().toISOString(),
-      players: players.map(p => ({
-        name: p.name,
-        time: p.time,
-        formattedTime: formatTime(p.time),
-        color: p.color
-      })),
-      timerMode,
-      totalTime: stats?.totalTime || 0,
-      averageTurnTime: stats?.averageTime || 0,
-      longestTurn: stats?.longestTurn || 0,
-      shortestTurn: stats?.shortestTurn || 0
-    };
-    
-    setGameHistory(prev => [gameData, ...prev]);
-    Alert.alert('Success', 'Game saved successfully!');
-  };
-
-  const getConnectionStatusColor = (): string => {
-    switch (connectionStatus) {
-      case 'connected': return '#10b981';
-      case 'connecting': return '#f59e0b';
-      case 'error': return '#ef4444';
-      default: return '#6b7280';
-    }
-  };
-
-  const getPlayerBoxSize = (): string => {
-    if (playerBoxSize === 'auto') {
-      const layout = getOptimalLayout(players.length);
-      return layout.size.charAt(0).toUpperCase() + layout.size.slice(1);
-    }
-    return playerBoxSize.charAt(0).toUpperCase() + playerBoxSize.slice(1);
-  };
-
-  const getPlayerGridCols = (): number => {
-    if (playerBoxSize === 'auto') {
-      return getOptimalLayout(players.length).cols;
-    }
-    
-    const size = getPlayerBoxSize().toLowerCase();
-    if (size === 'large') return players.length === 1 ? 1 : 2;
-    if (size === 'medium') return 2;
-    if (size === 'small') return 3;
-    return 4; // compact
-  };
-
-  // Play turn notification sound
-  const playTurnNotification = () => {
-    if (!playTurnSounds) return;
-    
-    if (customTurnSound) {
-      // Play custom recorded sound
-      const audio = new Audio(customTurnSound);
-      audio.play().catch(() => {
-        // Fallback to system beep if custom sound fails
-        playSystemBeep();
-      });
-    } else {
-      playSystemBeep();
-    }
-  };
-
-  const playSystemBeep = () => {
-    // Create a simple beep sound
-    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-    const oscillator = audioContext.createOscillator();
-    const gainNode = audioContext.createGain();
-    
-    oscillator.connect(gainNode);
-    gainNode.connect(audioContext.destination);
-    
-    oscillator.frequency.value = 800;
-    oscillator.type = 'sine';
-    
-    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
-    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
-    
-    oscillator.start(audioContext.currentTime);
-    oscillator.stop(audioContext.currentTime + 0.3);
-  };
-
-  // Get next available color for new players
-  const getNextPlayerColor = (): string => {
-    const usedColors = new Set(players.map(p => p.color));
-    return PLAYER_COLORS.find(color => !usedColors.has(color)) || PLAYER_COLORS[0];
-  };
-
-  // Calculate advanced game statistics
-  const calculateGameStats = () => {
-    if (!gameStarted || players.length === 0) return null;
-    
-    const playerTimes = players.map(p => p.time).filter(t => t > 0);
-    const totalTime = playerTimes.reduce((sum, time) => sum + time, 0);
-    const averageTime = totalTime / playerTimes.length;
-    const longestTurn = Math.max(...playerTimes);
-    const shortestTurn = Math.min(...playerTimes);
-    
-    return {
-      totalTime,
-      averageTime,
-      longestTurn,
-      shortestTurn,
-      activePlayers: playerTimes.length
-    };
-  };
-
-  // Screen Components
-  const HomeScreen = () => (
-    <ScrollView contentContainerStyle={[styles.container, theme === 'light' && styles.lightContainer]}>
-      <View style={styles.header}>
-        <Text style={[styles.title, theme === 'light' && styles.lightText]}>🎲 Board Game Timer</Text>
-        <Text style={[styles.subtitle, theme === 'light' && styles.lightSubtext]}>Track time for every player in your board games</Text>
-        {firebase && database && (
-          <Text style={styles.firebaseStatus}>🔥 Firebase Connected</Text>
-        )}
-        {!firebase && (
-          <Text style={styles.localStatus}>📱 Local Mode</Text>
-        )}
-      </View>
-
-      <View style={styles.buttonContainer}>
-        <TouchableOpacity 
-          style={[styles.button, styles.primaryButton, styles.buttonWithFeedback]} 
-          onPress={createNewGame}
-          activeOpacity={0.7}
-        >
-          <Text style={styles.buttonText}>🎮 Create New Game</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity 
-          style={[styles.button, styles.secondaryButton, styles.buttonWithFeedback]} 
-          onPress={() => setCurrentScreen('join')}
-          activeOpacity={0.7}
-        >
-          <Text style={styles.buttonText}>📱 Join Existing Game</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity 
-          style={[styles.button, styles.tertiaryButton, styles.buttonWithFeedback]} 
-          onPress={() => setCurrentScreen('history')}
-          activeOpacity={0.7}
-        >
-          <Text style={styles.buttonText}>🏆 Game History</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity 
-          style={[styles.button, styles.settingsButton, styles.buttonWithFeedback]} 
-          onPress={() => setShowSettings(true)}
-          activeOpacity={0.7}
-        >
-          <Text style={styles.buttonText}>⚙️ Settings</Text>
-        </TouchableOpacity>
-      </View>
-
-      {gameHistory.length > 0 && (
-        <View style={[styles.recentGames, theme === 'light' && styles.lightCard]}>
-          <Text style={[styles.sectionTitle, theme === 'light' && styles.lightText]}>Recent Games</Text>
-          {gameHistory.slice(0, 3).map(game => (
-            <View key={game.id} style={styles.gameHistoryItem}>
-              <Text style={[styles.gameName, theme === 'light' && styles.lightText]}>{game.name}</Text>
-              <Text style={[styles.gameDate, theme === 'light' && styles.lightSubtext]}>{new Date(game.date).toLocaleDateString()}</Text>
-            </View>
-          ))}
-        </View>
-      )}
-    </ScrollView>
-  );
-
-  const JoinGameScreen = () => (
-    <ScrollView contentContainerStyle={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>📱 Join Game</Text>
-        <Text style={styles.subtitle}>Enter the 6-character game ID to join</Text>
-      </View>
-
-      <View style={styles.inputContainer}>
-        <TextInput
-          style={styles.input}
-          placeholder="Enter Game ID (e.g. ABC123)"
-          placeholderTextColor="#999"
-          value={joinGameId}
-          onChangeText={(text) => setJoinGameId(text.toUpperCase())}
-          maxLength={6}
-          autoCapitalize="characters"
-        />
-        
-        <TouchableOpacity 
-          style={[styles.button, styles.primaryButton, !joinGameId.trim() && styles.disabledButton]} 
-          onPress={joinGame}
-          disabled={!joinGameId.trim()}
-        >
-          <Text style={styles.buttonText}>Join Game</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity style={[styles.button, styles.secondaryButton]} onPress={() => setCurrentScreen('home')}>
-          <Text style={styles.buttonText}>Back to Home</Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.infoBox}>
-        <Text style={styles.infoTitle}>How to join:</Text>
-        <Text style={styles.infoText}>• Get the Game ID from the host</Text>
-        <Text style={styles.infoText}>• Enter it above to join the session</Text>
-        <Text style={styles.infoText}>• All players see real-time updates</Text>
-        <Text style={styles.infoText}>• Host controls the game, others can view</Text>
-      </View>
-    </ScrollView>
-  );
-
-  const GameHistoryScreen = () => (
-    <ScrollView contentContainerStyle={styles.container}>
-      <View style={styles.headerRow}>
-        <Text style={styles.title}>🏆 Game History</Text>
-        <TouchableOpacity style={styles.backButton} onPress={() => setCurrentScreen('home')}>
-          <Text style={styles.backButtonText}>🏠 Home</Text>
-        </TouchableOpacity>
-      </View>
-
-      {gameHistory.length === 0 ? (
-        <View style={styles.emptyState}>
-          <Text style={styles.emptyTitle}>No games saved yet</Text>
-          <Text style={styles.emptySubtitle}>Play a game and save it to see it here!</Text>
-        </View>
-      ) : (
-        <View style={styles.historyList}>
-          {gameHistory.map(game => (
-            <View key={game.id} style={styles.historyCard}>
-              <View style={styles.historyHeader}>
-                <Text style={styles.historyGameName}>{game.name}</Text>
-                <Text style={styles.historyDate}>{new Date(game.date).toLocaleDateString()}</Text>
-              </View>
-              
-              <Text style={styles.historyTotal}>Total Time: {formatTime(game.totalTime)}</Text>
-              
-              <View style={styles.historyPlayers}>
-                {game.players.map((player, idx) => (
-                  <Text key={idx} style={styles.historyPlayer}>
-                    {player.name}: {player.formattedTime}
-                  </Text>
-                ))}
-              </View>
-            </View>
-          ))}
-        </View>
-      )}
-    </ScrollView>
-  );
-
-  const GameScreen = () => (
-    <ScrollView contentContainerStyle={styles.container}>
-      <View style={styles.headerRow}>
-        <View>
-          <Text style={styles.title}>
-            {gameId ? `Game: ${gameId}` : '🎲 Board Game Timer'}
-          </Text>
-          {gameId && isOnline && (
-            <View style={styles.connectionStatus}>
-              <View style={[styles.statusDot, { backgroundColor: getConnectionStatusColor() }]} />
-              <Text style={[styles.statusText, { color: getConnectionStatusColor() }]}>
-                {connectionStatus === 'connected' ? 
-                  `${connectedPlayers.length} player${connectedPlayers.length !== 1 ? 's' : ''} connected` : 
-                  connectionStatus}
-              </Text>
-            </View>
-          )}
-        </View>
-        <View style={styles.headerButtons}>
-          {gameId && (
-            <TouchableOpacity style={styles.shareButton} onPress={shareGame}>
-              <Text style={styles.shareButtonText}>📤 Share</Text>
-            </TouchableOpacity>
-          )}
-          <TouchableOpacity style={styles.settingsIconButton} onPress={() => setShowSettings(true)}>
-            <Text style={styles.settingsIconText}>⚙️</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.backButton} onPress={() => setCurrentScreen('home')}>
-            <Text style={styles.backButtonText}>🏠</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      <TextInput
-        style={styles.gameNameInput}
-        placeholder="Enter game name (optional)"
-        placeholderTextColor="#999"
-        value={localGameName} // Use local state
-        onChangeText={handleGameNameChange} // Use debounced handler
-        editable={isHost || !isOnline}
-      />
-
-      {isOnline && (
-        <View style={styles.roleIndicator}>
-          <Text style={[styles.roleText, isHost ? styles.hostRole : styles.clientRole]}>
-            {isHost ? '👑 HOST' : '👥 CLIENT'}
-          </Text>
-          <Text style={styles.roleDescription}>
-            {isHost ? 'You control the game' : 'Following host controls'}
-          </Text>
-        </View>
-      )}
-
-      <View style={styles.controlsContainer}>
-        <TouchableOpacity 
-          style={[styles.controlButton, styles.addButton, (!isHost && isOnline) && styles.disabledButton]} 
-          onPress={addPlayer}
-          disabled={!isHost && isOnline}
-        >
-          <Text style={styles.controlButtonText}>➕ Add Player</Text>
-        </TouchableOpacity>
-        
-        {!isRunning ? (
-          <TouchableOpacity 
-            style={[styles.controlButton, styles.playButton, (activePlayerId === null || (!isHost && isOnline)) && styles.disabledButton]} 
-            onPress={resumeGame}
-            disabled={activePlayerId === null || (!isHost && isOnline)}
-          >
-            <Text style={styles.controlButtonText}>
-              ▶️ {gameStarted ? 'Resume' : 'Start'}
-            </Text>
-          </TouchableOpacity>
-        ) : (
-          <TouchableOpacity 
-            style={[styles.controlButton, styles.pauseButton, (!isHost && isOnline) && styles.disabledButton]} 
-            onPress={pauseGame}
-            disabled={!isHost && isOnline}
-          >
-            <Text style={styles.controlButtonText}>⏸️ Pause</Text>
-          </TouchableOpacity>
-        )}
-        
-        {gameStarted && (
-          <>
-            <TouchableOpacity 
-              style={[styles.controlButton, styles.nextButton, (!isHost && isOnline) && styles.disabledButton]} 
-              onPress={nextPlayer}
-              disabled={!isHost && isOnline}
-            >
-              <Text style={styles.controlButtonText}>⏭️ Next</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.controlButton, styles.saveButton]} onPress={saveGame}>
-              <Text style={styles.controlButtonText}>💾 Save</Text>
-            </TouchableOpacity>
-          </>
-        )}
-        
-        <TouchableOpacity 
-          style={[styles.controlButton, styles.resetButton, (!isHost && isOnline) && styles.disabledButton]} 
-          onPress={resetGame}
-          disabled={!isHost && isOnline}
-        >
-          <Text style={styles.controlButtonText}>🔄 Reset</Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={[styles.playersGrid, { 
-        flexDirection: getPlayerGridCols() === 1 ? 'column' : 'row',
-        flexWrap: getPlayerGridCols() > 1 ? 'wrap' : 'nowrap'
-      }]}>
-        {players.map((player) => {
-          const boxSize = getPlayerBoxSize().toLowerCase();
-          const dynamicStyles = {
-            playerCard: boxSize === 'large' ? styles.playerCardLarge :
-                       boxSize === 'medium' ? styles.playerCardMedium :
-                       boxSize === 'small' ? styles.playerCardSmall : styles.playerCardCompact,
-            playerNameInput: boxSize === 'large' ? styles.playerNameInputLarge :
-                            boxSize === 'medium' ? styles.playerNameInputMedium :
-                            boxSize === 'small' ? styles.playerNameInputSmall : styles.playerNameInputCompact,
-            removeButton: boxSize === 'large' ? styles.removeButtonLarge :
-                         boxSize === 'medium' ? styles.removeButtonMedium :
-                         boxSize === 'small' ? styles.removeButtonSmall : styles.removeButtonCompact,
-            timeDisplay: boxSize === 'large' ? styles.timeDisplayLarge :
-                        boxSize === 'medium' ? styles.timeDisplayMedium :
-                        boxSize === 'small' ? styles.timeDisplaySmall : styles.timeDisplayCompact,
-            urgentText: boxSize === 'large' ? styles.urgentTextLarge :
-                       boxSize === 'medium' ? styles.urgentTextMedium :
-                       boxSize === 'small' ? styles.urgentTextSmall : styles.urgentTextCompact,
-            playerButton: boxSize === 'large' ? styles.playerButtonLarge :
-                         boxSize === 'medium' ? styles.playerButtonMedium :
-                         boxSize === 'small' ? styles.playerButtonSmall : styles.playerButtonCompact,
-            playerButtonText: boxSize === 'large' ? styles.playerButtonTextLarge :
-                             boxSize === 'medium' ? styles.playerButtonTextMedium :
-                             boxSize === 'small' ? styles.playerButtonTextSmall : styles.playerButtonTextCompact
-          };
-          
-          return (
-            <View
-              key={player.id}
-              style={[
-                styles.playerCard,
-                dynamicStyles.playerCard,
-                player.isActive && styles.activePlayerCard,
-                getPlayerGridCols() > 1 && { 
-                  width: getPlayerGridCols() === 2 ? '48%' : '31%',
-                  marginBottom: 8
-                }
-              ]}
-            >
-              <View style={styles.playerHeader}>
-                <TextInput
-                  style={[
-                    styles.playerNameInput,
-                    dynamicStyles.playerNameInput
-                  ]}
-                  value={localPlayerNames[player.id] || player.name} // Use local state
-                  onChangeText={(text) => handlePlayerNameChange(player.id, text)} // Use debounced handler
-                  editable={isHost || !isOnline}
-                />
-                {players.length > 2 && (
-                  <TouchableOpacity 
-                    onPress={() => removePlayer(player.id)}
-                    disabled={!isHost && isOnline}
-                  >
-                    <Text style={[
-                      styles.removeButton,
-                      dynamicStyles.removeButton,
-                      (!isHost && isOnline) && styles.disabledText
-                    ]}>❌</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-              
-              <View style={styles.timeContainer}>
-                <Text style={[
-                  styles.timeDisplay,
-                  dynamicStyles.timeDisplay,
-                  timerMode === 'countdown' && player.time <= 60 && styles.urgentTime
-                ]}>
-                  {formatTime(player.time)}
-                </Text>
-                {timerMode === 'countdown' && player.time <= 60 && player.time > 0 && (
-                  <Text style={[
-                    styles.urgentText,
-                    dynamicStyles.urgentText
-                  ]}>TIME RUNNING OUT!</Text>
-                )}
-              </View>
-              
-              <TouchableOpacity
-                style={[
-                  styles.playerButton,
-                  dynamicStyles.playerButton,
-                  ((player.isActive && isRunning) || (!isHost && isOnline)) && styles.disabledButton
-                ]}
-                onPress={() => startPlayerTurn(player.id)}
-                disabled={(player.isActive && isRunning) || (!isHost && isOnline)}
-              >
-                <Text style={[
-                  styles.playerButtonText,
-                  dynamicStyles.playerButtonText
-                ]}>
-                  {player.isActive && isRunning ? 'Active' : 'Start Turn'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          );
-        })}
-      </View>
-
-      {gameStarted && (
-        <View style={[styles.statsContainer, theme === 'light' && styles.lightCard]}>
-          <Text style={[styles.statsTitle, theme === 'light' && styles.lightText]}>📊 Advanced Game Statistics</Text>
-          <View style={styles.statsGrid}>
-            <View style={styles.statItem}>
-              <Text style={[styles.statLabel, theme === 'light' && styles.lightSubtext]}>Total Time</Text>
-              <Text style={[styles.statValue, theme === 'light' && styles.lightText]}>
-                {formatTime(players.reduce((sum, p) => sum + p.time, 0))}
-              </Text>
-            </View>
-            <View style={styles.statItem}>
-              <Text style={[styles.statLabel, theme === 'light' && styles.lightSubtext]}>Active Player</Text>
-              <Text style={[styles.statValue, theme === 'light' && styles.lightText]}>
-                {activePlayerId ? players.find(p => p.id === activePlayerId)?.name : 'None'}
-              </Text>
-            </View>
-            <View style={styles.statItem}>
-              <Text style={[styles.statLabel, theme === 'light' && styles.lightSubtext]}>Players</Text>
-              <Text style={[styles.statValue, theme === 'light' && styles.lightText]}>{players.length}</Text>
-            </View>
-            {(() => {
-              const stats = calculateGameStats();
-              return stats ? (
-                <>
-                  <View style={styles.statItem}>
-                    <Text style={[styles.statLabel, theme === 'light' && styles.lightSubtext]}>Average Turn</Text>
-                    <Text style={[styles.statValue, theme === 'light' && styles.lightText]}>
-                      {formatTime(Math.round(stats.averageTime))}
-                    </Text>
-                  </View>
-                  <View style={styles.statItem}>
-                    <Text style={[styles.statLabel, theme === 'light' && styles.lightSubtext]}>Longest Turn</Text>
-                    <Text style={[styles.statValue, theme === 'light' && styles.lightText]}>
-                      {formatTime(stats.longestTurn)}
-                    </Text>
-                  </View>
-                  <View style={styles.statItem}>
-                    <Text style={[styles.statLabel, theme === 'light' && styles.lightSubtext]}>Shortest Turn</Text>
-                    <Text style={[styles.statValue, theme === 'light' && styles.lightText]}>
-                      {formatTime(stats.shortestTurn)}
-                    </Text>
-                  </View>
-                </>
-              ) : null;
-            })()}
-          </View>
-        </View>
-      )}
-    </ScrollView>
-  );
-
-  return (
-    <View style={styles.app}>
-      {/* Settings Modal */}
-      {showSettings && (
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, theme === 'light' && styles.lightModal]}>
-            <Text style={[styles.modalTitle, theme === 'light' && styles.lightText]}>⚙️ Settings</Text>
-            
-            <View style={styles.settingSection}>
-              <Text style={[styles.settingLabel, theme === 'light' && styles.lightText]}>Theme</Text>
-              <View style={styles.settingOptions}>
-                <TouchableOpacity
-                  style={[
-                    styles.settingOption,
-                    theme === 'dark' && styles.settingOptionActive,
-                    theme === 'light' && styles.lightSettingOption
-                  ]}
-                  onPress={() => setTheme('dark')}
-                  activeOpacity={0.7}
-                >
-                  <Text style={[
-                    styles.settingOptionText,
-                    theme === 'dark' && styles.settingOptionTextActive,
-                    theme === 'light' && styles.lightText
-                  ]}>🌙 Dark</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[
-                    styles.settingOption,
-                    theme === 'light' && styles.settingOptionActive,
-                    theme === 'light' && styles.lightSettingOption
-                  ]}
-                  onPress={() => setTheme('light')}
-                  activeOpacity={0.7}
-                >
-                  <Text style={[
-                    styles.settingOptionText,
-                    theme === 'light' && styles.settingOptionTextActive,
-                    theme === 'light' && styles.lightText
-                  ]}>☀️ Light</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            <View style={styles.settingSection}>
-              <Text style={[styles.settingLabel, theme === 'light' && styles.lightText]}>Player Box Size</Text>
-              <View style={styles.settingOptions}>
-                {(['auto', 'large', 'medium', 'small', 'compact'] as PlayerBoxSize[]).map((size) => (
-                  <TouchableOpacity
-                    key={size}
-                    style={[
-                      styles.settingOption,
-                      playerBoxSize === size && styles.settingOptionActive,
-                      theme === 'light' && styles.lightSettingOption
-                    ]}
-                    onPress={() => setPlayerBoxSize(size)}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={[
-                      styles.settingOptionText,
-                      playerBoxSize === size && styles.settingOptionTextActive,
-                      theme === 'light' && styles.lightText
-                    ]}>
-                      {size.charAt(0).toUpperCase() + size.slice(1)}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-              <Text style={[styles.settingDescription, theme === 'light' && styles.lightSubtext]}>
-                Auto: Optimizes layout to fit all players on screen without scrolling
-              </Text>
-            </View>
-
-            <View style={styles.settingSection}>
-              <Text style={[styles.settingLabel, theme === 'light' && styles.lightText]}>Turn Notifications</Text>
-              <TouchableOpacity
-                style={[
-                  styles.settingToggle,
-                  playTurnSounds && styles.settingToggleActive,
-                  theme === 'light' && styles.lightSettingOption
-                ]}
-                onPress={() => setPlayTurnSounds(!playTurnSounds)}
-                activeOpacity={0.7}
-              >
-                <Text style={[
-                  styles.settingToggleText,
-                  playTurnSounds && styles.settingToggleTextActive,
-                  theme === 'light' && styles.lightText
-                ]}>
-                  🔊 {playTurnSounds ? 'Sound On' : 'Sound Off'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.settingSection}>
-              <Text style={[styles.settingLabel, theme === 'light' && styles.lightText]}>Timer Mode</Text>
-              <View style={styles.settingOptions}>
-                <TouchableOpacity
-                  style={[
-                    styles.settingOption,
-                    timerMode === 'countup' && styles.settingOptionActive,
-                    theme === 'light' && styles.lightSettingOption
-                  ]}
-                  onPress={() => setTimerMode('countup')}
-                  activeOpacity={0.7}
-                >
-                  <Text style={[
-                    styles.settingOptionText,
-                    timerMode === 'countup' && styles.settingOptionTextActive,
-                    theme === 'light' && styles.lightText
-                  ]}>Count Up</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[
-                    styles.settingOption,
-                    timerMode === 'countdown' && styles.settingOptionActive,
-                    theme === 'light' && styles.lightSettingOption
-                  ]}
-                  onPress={() => setTimerMode('countdown')}
-                  activeOpacity={0.7}
-                >
-                  <Text style={[
-                    styles.settingOptionText,
-                    timerMode === 'countdown' && styles.settingOptionTextActive,
-                    theme === 'light' && styles.lightText
-                  ]}>Count Down</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            {timerMode === 'countdown' && (
-              <View style={styles.settingSection}>
-                <Text style={[styles.settingLabel, theme === 'light' && styles.lightText]}>Initial Time (minutes)</Text>
-                <TextInput
-                  style={[styles.settingInput, theme === 'light' && styles.lightInput]}
-                  value={String(initialTime / 60)}
-                  onChangeText={(text) => setInitialTime(parseInt(text) * 60 || 600)}
-                  keyboardType="numeric"
-                  placeholder="10"
-                  placeholderTextColor={theme === 'light' ? "#666" : "#999"}
-                />
-              </View>
-            )}
-            
-            <TouchableOpacity
-              style={[styles.modalCloseButton, styles.buttonWithFeedback]}
-              onPress={() => setShowSettings(false)}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.modalCloseButtonText}>Done</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      )}
-
-      {currentScreen === 'home' && <HomeScreen />}
-      {currentScreen === 'game' && <GameScreen />}
-      {currentScreen === 'history' && <GameHistoryScreen />}
-      {currentScreen === 'join' && <JoinGameScreen />}
-    </View>
-  );
-};
 
 export default BoardGameTimer;
