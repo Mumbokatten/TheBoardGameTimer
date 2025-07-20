@@ -1,5 +1,34 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Alert } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Alert, Platform } from 'react-native';
+
+// Web-compatible alert function
+const showAlert = (title, message, buttons) => {
+  if (Platform.OS === 'web') {
+    if (buttons && buttons.length > 1) {
+      // For multiple buttons, use confirm for yes/no type dialogs
+      const confirmMessage = `${title}\n\n${message}`;
+      const confirmed = window.confirm(confirmMessage);
+      
+      if (confirmed && buttons.find(b => b.style !== 'cancel' && b.style !== 'destructive')) {
+        // Execute the non-cancel, non-destructive button (usually the primary action)
+        const primaryButton = buttons.find(b => b.style !== 'cancel' && b.style !== 'destructive');
+        if (primaryButton && primaryButton.onPress) primaryButton.onPress();
+      } else if (confirmed && buttons.find(b => b.style === 'destructive')) {
+        // Execute destructive action if confirmed
+        const destructiveButton = buttons.find(b => b.style === 'destructive');
+        if (destructiveButton && destructiveButton.onPress) destructiveButton.onPress();
+      }
+    } else {
+      // Single button or simple alert
+      window.alert(`${title}\n\n${message}`);
+      if (buttons && buttons[0] && buttons[0].onPress) {
+        buttons[0].onPress();
+      }
+    }
+  } else {
+    Alert.alert(title, message, buttons);
+  }
+};
 
 // Firebase configuration and initialization
 let firebase = null;
@@ -254,6 +283,7 @@ const GameScreen = ({
   nextPlayer,
   saveGame,
   resetGame,
+  finishGame,
   players,
   getPlayerGridCols,
   showColorPicker,
@@ -347,6 +377,9 @@ const GameScreen = ({
         <>
           <TouchableOpacity style={[styles.controlButton, styles.saveButton]} onPress={saveGame}>
             <Text style={styles.controlButtonText}>💾 Save</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.controlButton, styles.finishButton]} onPress={finishGame}>
+            <Text style={styles.controlButtonText}>🏁 Finish</Text>
           </TouchableOpacity>
           {lastActionState && (
             <TouchableOpacity style={[styles.controlButton, styles.undoButton]} onPress={undoLastAction}>
@@ -561,12 +594,12 @@ const BoardGameTimer = () => {
   const lastActiveTimeRef = useRef(Date.now());
   const wasRunningRef = useRef(false);
 
-  // Auto-save state every 30 seconds
+  // Auto-save state every 3 minutes (180 seconds) - good balance of usefulness vs performance
   useEffect(() => {
     if (gameStarted) {
       autoSaveRef.current = setInterval(() => {
         autoSaveGameState();
-      }, 30000); // Auto-save every 30 seconds
+      }, 180000); // Auto-save every 3 minutes
     }
     return () => {
       if (autoSaveRef.current) {
@@ -713,9 +746,9 @@ const BoardGameTimer = () => {
     
     if (firebase) {
       setConnectionStatus('connecting');
-      Alert.alert('Game Created!', `Game ID: ${newGameId}\n🔥 Firebase multiplayer enabled!`);
+      showAlert('Game Created!', `Game ID: ${newGameId}\n🔥 Firebase multiplayer enabled!`);
     } else {
-      Alert.alert('Game Created!', `Game ID: ${newGameId}\n📱 Running in local mode.`);
+      showAlert('Game Created!', `Game ID: ${newGameId}\n📱 Running in local mode.`);
     }
   };
 
@@ -736,16 +769,16 @@ const BoardGameTimer = () => {
         const snapshot = await firebase.get(gameRef);
         
         if (snapshot.exists()) {
-          Alert.alert('Joined Game!', `🔥 Connected to multiplayer game: ${gameIdToJoin}`);
+          showAlert('Joined Game!', `🔥 Connected to multiplayer game: ${gameIdToJoin}`);
         } else {
-          Alert.alert('Joined Game!', `🔥 Firebase enabled for game: ${gameIdToJoin}`);
+          showAlert('Joined Game!', `🔥 Firebase enabled for game: ${gameIdToJoin}`);
         }
       } catch (error) {
         console.log('Error loading game:', error);
-        Alert.alert('Joined Game!', `🔥 Firebase enabled for game: ${gameIdToJoin}`);
+        showAlert('Joined Game!', `🔥 Firebase enabled for game: ${gameIdToJoin}`);
       }
     } else {
-      Alert.alert('Joined Game!', `📱 Playing locally with ID: ${gameIdToJoin}`);
+      showAlert('Joined Game!', `📱 Playing locally with ID: ${gameIdToJoin}`);
     }
   };
 
@@ -780,7 +813,7 @@ const BoardGameTimer = () => {
   const addPlayer = () => {
     // Check guest permissions for adding players
     if (!isHostUser && !allowGuestControl) {
-      Alert.alert('Not Allowed', 'The host has disabled guest control.');
+      showAlert('Not Allowed', 'The host has disabled guest control.');
       return;
     }
     
@@ -802,7 +835,7 @@ const BoardGameTimer = () => {
   const removePlayer = (id) => {
     // Check guest permissions for removing players
     if (!isHostUser && !allowGuestControl) {
-      Alert.alert('Not Allowed', 'The host has disabled guest control.');
+      showAlert('Not Allowed', 'The host has disabled guest control.');
       return;
     }
     
@@ -825,7 +858,7 @@ const BoardGameTimer = () => {
     // Check guest permissions and show warning if needed
     if (!isHostUser && !allowGuestControl && name.length > 0) {
       setTimeout(() => {
-        Alert.alert('Note', 'The host has disabled guest control. Your changes may not be saved.');
+        showAlert('Note', 'The host has disabled guest control. Your changes may not be saved.');
       }, 1000);
     }
   }, [isHostUser, allowGuestControl]);
@@ -833,7 +866,7 @@ const BoardGameTimer = () => {
   const updatePlayerColor = useCallback((playerId, color) => {
     // Check guest permissions for changing player colors
     if (!isHostUser && !allowGuestControl) {
-      Alert.alert('Not Allowed', 'The host has disabled guest control.');
+      showAlert('Not Allowed', 'The host has disabled guest control.');
       return;
     }
     
@@ -849,7 +882,7 @@ const BoardGameTimer = () => {
     // Check guest permissions after a delay
     if (!isHostUser && !allowGuestControl && text.length > 0) {
       setTimeout(() => {
-        Alert.alert('Note', 'The host has disabled guest control. Your changes may not be saved.');
+        showAlert('Note', 'The host has disabled guest control. Your changes may not be saved.');
       }, 1000);
     }
   }, [isHostUser, allowGuestControl]);
@@ -1115,8 +1148,9 @@ const BoardGameTimer = () => {
   }, []);
 
   const resetGame = () => {
+    console.log('Reset button clicked, gameStarted:', gameStarted);
     if (gameStarted) {
-      Alert.alert(
+      showAlert(
         'Reset Game',
         'Do you want to save the current game before resetting?',
         [
@@ -1132,7 +1166,7 @@ const BoardGameTimer = () => {
             text: 'Reset Without Saving',
             style: 'destructive',
             onPress: () => {
-              Alert.alert(
+              showAlert(
                 'Are you sure?',
                 'This will permanently clear all timer data without saving.',
                 [
@@ -1149,11 +1183,23 @@ const BoardGameTimer = () => {
         ]
       );
     } else {
-      performReset();
+      showAlert(
+        'Reset Game',
+        'Are you sure you want to reset? This will clear all current data.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Reset',
+            style: 'destructive',
+            onPress: performReset
+          }
+        ]
+      );
     }
   };
 
   const performReset = () => {
+    console.log('Performing reset');
     setIsRunning(false);
     setActivePlayerId(null);
     setLastActivePlayerId(null);
@@ -1167,6 +1213,27 @@ const BoardGameTimer = () => {
       totalTurnTime: 0,
       turnStartTime: null
     })));
+    showAlert('Game Reset', 'The game has been reset successfully.');
+  };
+
+  const finishGame = () => {
+    if (!gameStarted) return;
+    
+    showAlert(
+      'Finish Game',
+      'Save this game and start fresh?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Finish & Save',
+          onPress: () => {
+            saveGame();
+            performReset();
+            showAlert('Game Finished', 'Game saved successfully and reset for a new game!');
+          }
+        }
+      ]
+    );
   };
 
   // Auto-save current game state
@@ -1256,14 +1323,15 @@ const BoardGameTimer = () => {
     const newHistory = [gameData, ...gameHistory];
     setGameHistory(newHistory);
     saveGameHistory(newHistory);
-    Alert.alert('Success', 'Game saved successfully!');
+    showAlert('Success', 'Game saved successfully!');
   };
 
   // Delete game from history
   const deleteGame = (gameId) => {
-    Alert.alert(
+    const gameToDelete = gameHistory.find(game => game.id === gameId);
+    showAlert(
       'Delete Game',
-      'Are you sure you want to delete this game?',
+      `Are you sure you want to permanently delete "${gameToDelete?.name || 'this game'}"? This action cannot be undone.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -1273,6 +1341,7 @@ const BoardGameTimer = () => {
             const newHistory = gameHistory.filter(game => game.id !== gameId);
             setGameHistory(newHistory);
             saveGameHistory(newHistory);
+            showAlert('Deleted', 'Game deleted successfully.');
           }
         }
       ]
@@ -1281,21 +1350,21 @@ const BoardGameTimer = () => {
 
   // Load saved game and continue playing
   const loadSavedGame = (game) => {
-    Alert.alert(
+    showAlert(
       'Continue Game',
-      `Continue playing "${game.name}"?`,
+      `Start a new session continuing from "${game.name}"? This will create a new save when you save again.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Continue',
           onPress: () => {
-            // Reset current game state
-            setGameId('');
+            // Reset current game state but keep it as a new session
+            setGameId(''); // New session, no multiplayer ID
             setIsHost(false);
             setIsHostUser(true);
             setAllowGuestControl(false);
             
-            // Load saved game data
+            // Load saved game data with new session naming
             const loadedPlayers = game.players.map((p, index) => ({
               id: index + 1,
               name: p.name,
@@ -1308,14 +1377,14 @@ const BoardGameTimer = () => {
             }));
             
             setPlayers(loadedPlayers);
-            setCurrentGameName(game.name);
+            setCurrentGameName(game.name + ' (Continued)');
             setTimerMode(game.timerMode || 'countup');
             setActivePlayerId(null);
             setIsRunning(false);
             setGameStarted(true); // Mark as started so controls are available
             setCurrentScreen('game');
             
-            Alert.alert('Game Loaded', `Continuing "${game.name}". You can now resume playing!`);
+            showAlert('Session Started', `New session created from "${game.name}". You can now continue playing and save as a new game!`);
           }
         }
       ]
@@ -1330,7 +1399,7 @@ const BoardGameTimer = () => {
       setIsRunning(lastActionState.isRunning);
       setGameStarted(lastActionState.gameStarted);
       setLastActionState(null);
-      Alert.alert('Undone', 'Last action has been undone');
+      showAlert('Undone', 'Last action has been undone');
     }
   };
 
@@ -1569,6 +1638,7 @@ const BoardGameTimer = () => {
           nextPlayer={nextPlayer}
           saveGame={saveGame}
           resetGame={resetGame}
+          finishGame={finishGame}
           players={players}
           getPlayerGridCols={getPlayerGridCols}
           showColorPicker={showColorPicker}
@@ -1881,6 +1951,9 @@ const styles = StyleSheet.create({
   },
   saveButton: {
     backgroundColor: '#059669',
+  },
+  finishButton: {
+    backgroundColor: '#7c3aed',
   },
   resetButton: {
     backgroundColor: '#ef4444',
