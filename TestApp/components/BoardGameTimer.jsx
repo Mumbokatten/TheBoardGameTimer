@@ -824,8 +824,11 @@ const BoardGameTimer = () => {
   };
 
   const addPlayer = () => {
+    console.log('Add player button clicked! isHostUser:', isHostUser, 'allowGuestControl:', allowGuestControl);
+    
     // Check guest permissions for adding players
     if (!isHostUser && !allowGuestControl) {
+      console.log('Permission denied - isHostUser:', isHostUser, 'allowGuestControl:', allowGuestControl);
       Alert.alert('Not Allowed', 'The host has disabled guest control.');
       return;
     }
