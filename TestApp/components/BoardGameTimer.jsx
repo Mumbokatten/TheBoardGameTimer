@@ -708,18 +708,31 @@ const BoardGameTimer = () => {
     return () => clearTimeout(syncTimeoutRef.current);
   }, [activePlayerId, isRunning]); // Timer changes sync from anyone
 
-  // Text changes and settings sync - simplified
+  // Text changes and settings sync - more responsive
   const gameNameTimeoutRef = useRef();
   useEffect(() => {
     if (firebase && gameId && isHost) {
       clearTimeout(gameNameTimeoutRef.current);
       gameNameTimeoutRef.current = setTimeout(() => {
         syncGameStateToFirebase();
-      }, 2000);
+      }, 500); // Faster sync for text changes
     }
     
     return () => clearTimeout(gameNameTimeoutRef.current);
   }, [currentGameName, allowGuestControl, allowGuestNames]);
+
+  // Immediate sync for player count changes (add/remove)
+  const playerCountTimeoutRef = useRef();
+  useEffect(() => {
+    if (firebase && gameId) {
+      clearTimeout(playerCountTimeoutRef.current);
+      playerCountTimeoutRef.current = setTimeout(() => {
+        syncGameStateToFirebase();
+      }, 100); // Very fast sync for player changes
+    }
+    
+    return () => clearTimeout(playerCountTimeoutRef.current);
+  }, [players.length]); // Sync when player count changes
 
   // Firebase listener effect
   useEffect(() => {
@@ -824,11 +837,8 @@ const BoardGameTimer = () => {
   };
 
   const addPlayer = () => {
-    console.log('Add player button clicked! isHostUser:', isHostUser, 'allowGuestControl:', allowGuestControl);
-    
     // Check guest permissions for adding players
     if (!isHostUser && !allowGuestControl) {
-      console.log('Permission denied - isHostUser:', isHostUser, 'allowGuestControl:', allowGuestControl);
       Alert.alert('Not Allowed', 'The host has disabled guest control.');
       return;
     }
@@ -897,13 +907,20 @@ const BoardGameTimer = () => {
       player.id === id ? { ...player, name } : player
     ));
     
+    // Immediate sync for name changes
+    if (firebase && gameId) {
+      setTimeout(() => {
+        syncGameStateToFirebase();
+      }, 300); // Quick sync for name changes
+    }
+    
     // Check guest permissions for name editing specifically
     if (!isHostUser && !allowGuestNames && name.length > 0) {
       setTimeout(() => {
         Alert.alert('Note', 'The host has disabled guest name editing. Your changes may not be saved.');
       }, 1000);
     }
-  }, [isHostUser, allowGuestNames]);
+  }, [isHostUser, allowGuestNames, firebase, gameId]);
 
   const updatePlayerColor = useCallback((playerId, color) => {
     // Check guest permissions for changing player colors (use allowGuestNames for colors too)
