@@ -303,6 +303,7 @@ const GameScreen = ({
   startPlayerTurn,
   lastActionState,
   undoLastAction,
+  isHostUser,
   theme
 }) => (
   <ScrollView style={[styles.container, theme === 'light' && styles.lightContainer]} contentContainerStyle={styles.scrollContent}>
@@ -384,9 +385,11 @@ const GameScreen = ({
           <TouchableOpacity style={[styles.controlButton, styles.saveButton]} onPress={saveGame}>
             <Text style={styles.controlButtonText}>💾 Save</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.controlButton, styles.finishButton]} onPress={finishGame}>
-            <Text style={styles.controlButtonText}>🏁 Finish</Text>
-          </TouchableOpacity>
+          {isHostUser && (
+            <TouchableOpacity style={[styles.controlButton, styles.finishButton]} onPress={finishGame}>
+              <Text style={styles.controlButtonText}>🏁 Finish</Text>
+            </TouchableOpacity>
+          )}
           {lastActionState && (
             <TouchableOpacity style={[styles.controlButton, styles.undoButton]} onPress={undoLastAction}>
               <Text style={styles.controlButtonText}>↶ Undo</Text>
@@ -395,12 +398,14 @@ const GameScreen = ({
         </>
       )}
       
-      <TouchableOpacity 
-        style={[styles.controlButton, styles.resetButton]} 
-        onPress={resetGame}
-      >
-        <Text style={styles.controlButtonText}>🔄 Reset</Text>
-      </TouchableOpacity>
+      {isHostUser && (
+        <TouchableOpacity 
+          style={[styles.controlButton, styles.resetButton]} 
+          onPress={resetGame}
+        >
+          <Text style={styles.controlButtonText}>🔄 Reset</Text>
+        </TouchableOpacity>
+      )}
     </View>
 
     <View style={[styles.playersGrid, { 
@@ -803,6 +808,7 @@ const BoardGameTimer = () => {
     const gameIdToJoin = joinGameId.trim().toUpperCase();
     setGameId(gameIdToJoin);
     setIsHost(false);
+    setIsHostUser(false); // Important: guest should not see host controls
     setCurrentScreen('game');
     
     if (firebase) {
@@ -921,7 +927,13 @@ const BoardGameTimer = () => {
   };
 
   const updatePlayerName = useCallback((id, name) => {
-    // Allow typing, update immediately
+    // Check permissions first
+    if (!isHostUser && !allowGuestNames) {
+      Alert.alert('Not Allowed', 'The host has disabled guest name editing.');
+      return;
+    }
+    
+    // Update player name immediately
     setPlayers(prev => prev.map(player => 
       player.id === id ? { ...player, name } : player
     ));
@@ -931,13 +943,6 @@ const BoardGameTimer = () => {
       setTimeout(() => {
         syncGameStateToFirebase();
       }, 300); // Quick sync for name changes
-    }
-    
-    // Check guest permissions for name editing specifically
-    if (!isHostUser && !allowGuestNames && name.length > 0) {
-      setTimeout(() => {
-        Alert.alert('Note', 'The host has disabled guest name editing. Your changes may not be saved.');
-      }, 1000);
     }
   }, [isHostUser, allowGuestNames, firebase, gameId]);
 
@@ -954,16 +959,22 @@ const BoardGameTimer = () => {
   }, [isHostUser, allowGuestNames]);
 
   const handleGameNameChange = useCallback((text) => {
-    // Allow typing, but show warning after typing if not allowed
+    // Check permissions first
+    if (!isHostUser && !allowGuestNames) {
+      Alert.alert('Not Allowed', 'The host has disabled guest name editing.');
+      return;
+    }
+    
+    // Update game name immediately
     setCurrentGameName(text);
     
-    // Check guest permissions after a delay (game name uses allowGuestNames)
-    if (!isHostUser && !allowGuestNames && text.length > 0) {
+    // Immediate sync for name changes
+    if (firebase && gameId) {
       setTimeout(() => {
-        Alert.alert('Note', 'The host has disabled guest name editing. Your changes may not be saved.');
-      }, 1000);
+        syncGameStateToFirebase();
+      }, 300); // Quick sync for name changes
     }
-  }, [isHostUser, allowGuestNames]);
+  }, [isHostUser, allowGuestNames, firebase, gameId]);
 
   const handleJoinGameIdChange = useCallback((text) => {
     setJoinGameId(text.toUpperCase());
@@ -1185,6 +1196,13 @@ const BoardGameTimer = () => {
     }
     setIsRunning(false);
     setActivePlayerId(null);
+    
+    // Immediately sync pause state to Firebase for multiplayer
+    if (firebase && gameId) {
+      setTimeout(() => {
+        syncGameStateToFirebase();
+      }, 100); // Quick sync for pause state
+    }
   };
   
   const resumeGame = () => {
@@ -1201,6 +1219,13 @@ const BoardGameTimer = () => {
         })));
       }
       setIsRunning(true);
+      
+      // Immediately sync resume state to Firebase for multiplayer
+      if (firebase && gameId) {
+        setTimeout(() => {
+          syncGameStateToFirebase();
+        }, 100); // Quick sync for resume state
+      }
     }
   };
 
@@ -1824,6 +1849,7 @@ const BoardGameTimer = () => {
           startPlayerTurn={startPlayerTurn}
           lastActionState={lastActionState}
           undoLastAction={undoLastAction}
+          isHostUser={isHostUser}
           theme={theme}
         />
       )}
