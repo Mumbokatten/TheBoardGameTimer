@@ -746,9 +746,9 @@ const BoardGameTimer = () => {
     
     if (firebase) {
       setConnectionStatus('connecting');
-      showAlert('Game Created!', `Game ID: ${newGameId}\n🔥 Firebase multiplayer enabled!`);
+      Alert.alert('Game Created!', `Game ID: ${newGameId}\n🔥 Firebase multiplayer enabled!`);
     } else {
-      showAlert('Game Created!', `Game ID: ${newGameId}\n📱 Running in local mode.`);
+      Alert.alert('Game Created!', `Game ID: ${newGameId}\n📱 Running in local mode.`);
     }
   };
 
@@ -769,16 +769,16 @@ const BoardGameTimer = () => {
         const snapshot = await firebase.get(gameRef);
         
         if (snapshot.exists()) {
-          showAlert('Joined Game!', `🔥 Connected to multiplayer game: ${gameIdToJoin}`);
+          Alert.alert('Joined Game!', `🔥 Connected to multiplayer game: ${gameIdToJoin}`);
         } else {
-          showAlert('Joined Game!', `🔥 Firebase enabled for game: ${gameIdToJoin}`);
+          Alert.alert('Joined Game!', `🔥 Firebase enabled for game: ${gameIdToJoin}`);
         }
       } catch (error) {
         console.log('Error loading game:', error);
-        showAlert('Joined Game!', `🔥 Firebase enabled for game: ${gameIdToJoin}`);
+        Alert.alert('Joined Game!', `🔥 Firebase enabled for game: ${gameIdToJoin}`);
       }
     } else {
-      showAlert('Joined Game!', `📱 Playing locally with ID: ${gameIdToJoin}`);
+      Alert.alert('Joined Game!', `📱 Playing locally with ID: ${gameIdToJoin}`);
     }
   };
 
@@ -813,7 +813,7 @@ const BoardGameTimer = () => {
   const addPlayer = () => {
     // Check guest permissions for adding players
     if (!isHostUser && !allowGuestControl) {
-      showAlert('Not Allowed', 'The host has disabled guest control.');
+      Alert.alert('Not Allowed', 'The host has disabled guest control.');
       return;
     }
     
@@ -835,7 +835,7 @@ const BoardGameTimer = () => {
   const removePlayer = (id) => {
     // Check guest permissions for removing players
     if (!isHostUser && !allowGuestControl) {
-      showAlert('Not Allowed', 'The host has disabled guest control.');
+      Alert.alert('Not Allowed', 'The host has disabled guest control.');
       return;
     }
     
@@ -858,7 +858,7 @@ const BoardGameTimer = () => {
     // Check guest permissions and show warning if needed
     if (!isHostUser && !allowGuestControl && name.length > 0) {
       setTimeout(() => {
-        showAlert('Note', 'The host has disabled guest control. Your changes may not be saved.');
+        Alert.alert('Note', 'The host has disabled guest control. Your changes may not be saved.');
       }, 1000);
     }
   }, [isHostUser, allowGuestControl]);
@@ -866,7 +866,7 @@ const BoardGameTimer = () => {
   const updatePlayerColor = useCallback((playerId, color) => {
     // Check guest permissions for changing player colors
     if (!isHostUser && !allowGuestControl) {
-      showAlert('Not Allowed', 'The host has disabled guest control.');
+      Alert.alert('Not Allowed', 'The host has disabled guest control.');
       return;
     }
     
@@ -882,7 +882,7 @@ const BoardGameTimer = () => {
     // Check guest permissions after a delay
     if (!isHostUser && !allowGuestControl && text.length > 0) {
       setTimeout(() => {
-        showAlert('Note', 'The host has disabled guest control. Your changes may not be saved.');
+        Alert.alert('Note', 'The host has disabled guest control. Your changes may not be saved.');
       }, 1000);
     }
   }, [isHostUser, allowGuestControl]);
@@ -1213,7 +1213,7 @@ const BoardGameTimer = () => {
       totalTurnTime: 0,
       turnStartTime: null
     })));
-    showAlert('Game Reset', 'The game has been reset successfully.');
+    Alert.alert('Game Reset', 'The game has been reset successfully.');
   };
 
   const finishGame = () => {
@@ -1229,7 +1229,7 @@ const BoardGameTimer = () => {
           onPress: () => {
             saveGame();
             performReset();
-            showAlert('Game Finished', 'Game saved successfully and reset for a new game!');
+            Alert.alert('Game Finished', 'Game saved successfully and reset for a new game!');
           }
         }
       ]
@@ -1323,7 +1323,7 @@ const BoardGameTimer = () => {
     const newHistory = [gameData, ...gameHistory];
     setGameHistory(newHistory);
     saveGameHistory(newHistory);
-    showAlert('Success', 'Game saved successfully!');
+    Alert.alert('Success', 'Game saved successfully!');
   };
 
   // Delete game from history
@@ -1341,7 +1341,7 @@ const BoardGameTimer = () => {
             const newHistory = gameHistory.filter(game => game.id !== gameId);
             setGameHistory(newHistory);
             saveGameHistory(newHistory);
-            showAlert('Deleted', 'Game deleted successfully.');
+            Alert.alert('Deleted', 'Game deleted successfully.');
           }
         }
       ]
@@ -1384,7 +1384,7 @@ const BoardGameTimer = () => {
             setGameStarted(true); // Mark as started so controls are available
             setCurrentScreen('game');
             
-            showAlert('Session Started', `New session created from "${game.name}". You can now continue playing and save as a new game!`);
+            Alert.alert('Session Started', `New session created from "${game.name}". You can now continue playing and save as a new game!`);
           }
         }
       ]
@@ -1399,7 +1399,7 @@ const BoardGameTimer = () => {
       setIsRunning(lastActionState.isRunning);
       setGameStarted(lastActionState.gameStarted);
       setLastActionState(null);
-      showAlert('Undone', 'Last action has been undone');
+      Alert.alert('Undone', 'Last action has been undone');
     }
   };
 
