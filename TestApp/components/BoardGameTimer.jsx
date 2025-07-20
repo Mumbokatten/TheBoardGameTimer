@@ -297,12 +297,13 @@ const GameScreen = ({
   getAverageTurnTime,
   startPlayerTurn,
   lastActionState,
-  undoLastAction
+  undoLastAction,
+  theme
 }) => (
-  <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
+  <ScrollView style={[styles.container, theme === 'light' && styles.lightContainer]} contentContainerStyle={styles.scrollContent}>
     <View style={styles.headerRow}>
       <View>
-        <Text style={styles.title}>
+        <Text style={[styles.title, theme === 'light' && styles.lightText]}>
           {gameId ? `Game: ${gameId}` : '🎲 Board Game Timer'}
         </Text>
         {firebase && gameId && (
@@ -768,7 +769,16 @@ const BoardGameTimer = () => {
     setGameId(newGameId);
     setIsHost(true);
     setCurrentScreen('game');
-    performReset(); // Use direct reset without confirmation for new games
+    
+    // Force fresh start - always 0 for new games
+    setIsRunning(false);
+    setActivePlayerId(null);
+    setLastActivePlayerId(null);
+    setGameStarted(false);
+    setPlayers([
+      { id: 1, name: 'Player 1', time: 0, isActive: false, color: PLAYER_COLORS[0].value, turns: 0, totalTurnTime: 0, turnStartTime: null },
+      { id: 2, name: 'Player 2', time: 0, isActive: false, color: PLAYER_COLORS[1].value, turns: 0, totalTurnTime: 0, turnStartTime: null }
+    ]);
     
     if (firebase) {
       setConnectionStatus('connecting');
@@ -1069,6 +1079,11 @@ const BoardGameTimer = () => {
     }
     
     saveStateForUndo(); // Save state for undo
+    
+    // Pause timer first to prevent race conditions
+    const wasRunning = isRunning;
+    setIsRunning(false);
+    
     const currentTime = Date.now();
     
     setPlayers(prev => prev.map(player => {
@@ -1093,8 +1108,9 @@ const BoardGameTimer = () => {
       return { ...player, isActive: false };
     }));
     
+    // Set new active player and resume timer
     setActivePlayerId(newPlayerId);
-    setIsRunning(true);
+    setIsRunning(wasRunning); // Resume if it was running
     setGameStarted(true);
     
     // Play turn sound if enabled
@@ -1266,7 +1282,11 @@ const BoardGameTimer = () => {
     setActivePlayerId(null);
     setLastActivePlayerId(null);
     setGameStarted(false);
+    
+    // For create new game, always reset to 0 regardless of timer mode
+    // For manual reset during game, respect timer mode
     const resetTime = timerMode === 'countdown' ? initialTime : 0;
+    
     setPlayers(prev => prev.map(player => ({
       ...player,
       time: resetTime,
@@ -1747,6 +1767,7 @@ const BoardGameTimer = () => {
           startPlayerTurn={startPlayerTurn}
           lastActionState={lastActionState}
           undoLastAction={undoLastAction}
+          theme={theme}
         />
       )}
       {currentScreen === 'history' && (
@@ -1801,6 +1822,8 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     textAlign: 'center',
     marginBottom: 8,
+    maxWidth: '100%',
+    flexShrink: 1, // Allow title to shrink on mobile
   },
   lightText: {
     color: '#2d3748',
@@ -1907,6 +1930,8 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     marginBottom: 16,
     marginTop: 20,
+    flexWrap: 'wrap', // Allow wrapping on mobile
+    gap: 8,
   },
   headerButtons: {
     flexDirection: 'row',
@@ -2015,6 +2040,8 @@ const styles = StyleSheet.create({
     outlineStyle: 'none',
     cursor: 'text',
     pointerEvents: 'auto',
+    maxWidth: '100%', // Ensure it doesn't overflow on mobile
+    width: '100%',
   },
   controlsContainer: {
     flexDirection: 'row',
