@@ -591,6 +591,7 @@ const BoardGameTimer = () => {
   const [lastActionState, setLastActionState] = useState(null); // For undo functionality
   const [isOfflineMode, setIsOfflineMode] = useState(false);
   const [allowGuestControl, setAllowGuestControl] = useState(false);
+  const [allowGuestNames, setAllowGuestNames] = useState(false); // Separate control for names
   const [isHostUser, setIsHostUser] = useState(true);
   const [lastActivePlayerId, setLastActivePlayerId] = useState(null);
   
@@ -718,7 +719,7 @@ const BoardGameTimer = () => {
     }
     
     return () => clearTimeout(gameNameTimeoutRef.current);
-  }, [currentGameName, allowGuestControl]);
+  }, [currentGameName, allowGuestControl, allowGuestNames]);
 
   // Firebase listener effect
   useEffect(() => {
@@ -893,37 +894,37 @@ const BoardGameTimer = () => {
       player.id === id ? { ...player, name } : player
     ));
     
-    // Check guest permissions and show warning if needed
-    if (!isHostUser && !allowGuestControl && name.length > 0) {
+    // Check guest permissions for name editing specifically
+    if (!isHostUser && !allowGuestNames && name.length > 0) {
       setTimeout(() => {
-        Alert.alert('Note', 'The host has disabled guest control. Your changes may not be saved.');
+        Alert.alert('Note', 'The host has disabled guest name editing. Your changes may not be saved.');
       }, 1000);
     }
-  }, [isHostUser, allowGuestControl]);
+  }, [isHostUser, allowGuestNames]);
 
   const updatePlayerColor = useCallback((playerId, color) => {
-    // Check guest permissions for changing player colors
-    if (!isHostUser && !allowGuestControl) {
-      Alert.alert('Not Allowed', 'The host has disabled guest control.');
+    // Check guest permissions for changing player colors (use allowGuestNames for colors too)
+    if (!isHostUser && !allowGuestNames) {
+      Alert.alert('Not Allowed', 'The host has disabled guest name and color editing.');
       return;
     }
     
     setPlayers(prev => prev.map(player => 
       player.id === playerId ? { ...player, color } : player
     ));
-  }, [isHostUser, allowGuestControl]);
+  }, [isHostUser, allowGuestNames]);
 
   const handleGameNameChange = useCallback((text) => {
     // Allow typing, but show warning after typing if not allowed
     setCurrentGameName(text);
     
-    // Check guest permissions after a delay
-    if (!isHostUser && !allowGuestControl && text.length > 0) {
+    // Check guest permissions after a delay (game name uses allowGuestNames)
+    if (!isHostUser && !allowGuestNames && text.length > 0) {
       setTimeout(() => {
-        Alert.alert('Note', 'The host has disabled guest control. Your changes may not be saved.');
+        Alert.alert('Note', 'The host has disabled guest name editing. Your changes may not be saved.');
       }, 1000);
     }
-  }, [isHostUser, allowGuestControl]);
+  }, [isHostUser, allowGuestNames]);
 
   const handleJoinGameIdChange = useCallback((text) => {
     setJoinGameId(text.toUpperCase());
@@ -951,7 +952,8 @@ const BoardGameTimer = () => {
       currentGameName,
       lastUpdated: Date.now(),
       hostId: playerId.current,
-      allowGuestControl
+      allowGuestControl,
+      allowGuestNames
     };
 
     if (firebase && firebase.database) {
@@ -997,6 +999,7 @@ const BoardGameTimer = () => {
             initialTime: data.initialTime || 600,
             currentGameName: data.currentGameName || '',
             allowGuestControl: data.allowGuestControl || false,
+            allowGuestNames: data.allowGuestNames || false,
             isHostUser: data.hostId === playerId.current
           };
           
@@ -1006,6 +1009,7 @@ const BoardGameTimer = () => {
           setIsRunning(updates.isRunning);
           setGameStarted(updates.gameStarted);
           setAllowGuestControl(updates.allowGuestControl);
+          setAllowGuestNames(updates.allowGuestNames);
           setIsHostUser(updates.isHostUser);
         }
         setConnectionStatus('connected');
@@ -1606,35 +1610,67 @@ const BoardGameTimer = () => {
             </View>
             
             {isHostUser && gameId && (
-              <View style={styles.settingSection}>
-                <Text style={styles.settingLabel}>Multiplayer Controls</Text>
-                <View style={styles.settingOptions}>
-                  <TouchableOpacity
-                    style={[
-                      styles.settingOption,
-                      allowGuestControl && styles.settingOptionActive
-                    ]}
-                    onPress={() => setAllowGuestControl(!allowGuestControl)}
-                  >
-                    <Text style={[
-                      styles.settingOptionText,
-                      allowGuestControl && styles.settingOptionTextActive
-                    ]}>👥 Allow Guest Control</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[
-                      styles.settingOption,
-                      !allowGuestControl && styles.settingOptionActive
-                    ]}
-                    onPress={() => setAllowGuestControl(!allowGuestControl)}
-                  >
-                    <Text style={[
-                      styles.settingOptionText,
-                      !allowGuestControl && styles.settingOptionTextActive
-                    ]}>🔒 Host Only</Text>
-                  </TouchableOpacity>
+              <>
+                <View style={styles.settingSection}>
+                  <Text style={styles.settingLabel}>Guest Timer Controls</Text>
+                  <View style={styles.settingOptions}>
+                    <TouchableOpacity
+                      style={[
+                        styles.settingOption,
+                        allowGuestControl && styles.settingOptionActive
+                      ]}
+                      onPress={() => setAllowGuestControl(!allowGuestControl)}
+                    >
+                      <Text style={[
+                        styles.settingOptionText,
+                        allowGuestControl && styles.settingOptionTextActive
+                      ]}>👥 Allow Guests</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[
+                        styles.settingOption,
+                        !allowGuestControl && styles.settingOptionActive
+                      ]}
+                      onPress={() => setAllowGuestControl(!allowGuestControl)}
+                    >
+                      <Text style={[
+                        styles.settingOptionText,
+                        !allowGuestControl && styles.settingOptionTextActive
+                      ]}>🔒 Host Only</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
-              </View>
+                
+                <View style={styles.settingSection}>
+                  <Text style={styles.settingLabel}>Guest Name Editing</Text>
+                  <View style={styles.settingOptions}>
+                    <TouchableOpacity
+                      style={[
+                        styles.settingOption,
+                        allowGuestNames && styles.settingOptionActive
+                      ]}
+                      onPress={() => setAllowGuestNames(!allowGuestNames)}
+                    >
+                      <Text style={[
+                        styles.settingOptionText,
+                        allowGuestNames && styles.settingOptionTextActive
+                      ]}>✏️ Allow Guests</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[
+                        styles.settingOption,
+                        !allowGuestNames && styles.settingOptionActive
+                      ]}
+                      onPress={() => setAllowGuestNames(!allowGuestNames)}
+                    >
+                      <Text style={[
+                        styles.settingOptionText,
+                        !allowGuestNames && styles.settingOptionTextActive
+                      ]}>🔒 Locked</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </>
             )}
             
             <TouchableOpacity
