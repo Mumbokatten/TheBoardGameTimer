@@ -37,7 +37,7 @@ let database = null;
 try {
   // Import Firebase functions
   const { initializeApp } = require('firebase/app');
-  const { getDatabase, ref, set, update, onValue, get, off } = require('firebase/database');
+  const { getDatabase, ref, set, update, onValue, get, off, remove } = require('firebase/database');
   
   // Your Firebase configuration
   const firebaseConfig = {
@@ -54,7 +54,7 @@ try {
   // Initialize Firebase
   const app = initializeApp(firebaseConfig);
   database = getDatabase(app);
-  firebase = { app, database, ref, set, update, onValue, get, off };
+  firebase = { app, database, ref, set, update, onValue, get, off, remove };
   console.log('🔥 Firebase initialized successfully');
 } catch (error) {
   console.log('Firebase not available, running in local mode:', error);
@@ -459,6 +459,8 @@ const GameScreen = ({
               ]}
               value={player.name}
               onChangeText={handlePlayerNameChange(player.id)}
+              onFocus={() => setEditingPlayerId(player.id)}
+              onBlur={() => setEditingPlayerId(null)}
               autoComplete="off"
               selectTextOnFocus={true}
               editable={true}
@@ -605,6 +607,8 @@ const BoardGameTimer = () => {
   const [allowGuestNames, setAllowGuestNames] = useState(false); // Separate control for names
   const [isHostUser, setIsHostUser] = useState(true);
   const [lastActivePlayerId, setLastActivePlayerId] = useState(null);
+  const [editingPlayerId, setEditingPlayerId] = useState(null); // Track which player is being edited
+  const [authoritativeTimerPlayerId, setAuthoritativeTimerPlayerId] = useState(null); // Track who owns the current timer
   
   const [showColorPicker, setShowColorPicker] = useState(null);
   
@@ -617,6 +621,8 @@ const BoardGameTimer = () => {
   const autoSaveRef = useRef();
   const lastActiveTimeRef = useRef(Date.now());
   const wasRunningRef = useRef(false);
+  const lastLocalActionRef = useRef(0); // Track when local actions happen
+  const ignoreUpdatesUntilRef = useRef(0); // Ignore Firebase updates for a short time after local actions
 
   // Auto-save state every 3 minutes (180 seconds) - good balance of usefulness vs performance
   useEffect(() => {
@@ -868,6 +874,9 @@ const BoardGameTimer = () => {
       return;
     }
     
+    // Mark this as a local action for optimistic updates
+    markLocalAction();
+    
     saveStateForUndo(); // Save state for undo
     const newId = Math.max(...players.map(p => p.id)) + 1;
     const newPlayer = {
@@ -881,6 +890,13 @@ const BoardGameTimer = () => {
       turnStartTime: null
     };
     setPlayers([...players, newPlayer]);
+    
+    // Immediately sync player addition to Firebase
+    if (firebase && gameId) {
+      setTimeout(() => {
+        syncGameStateToFirebase();
+      }, 50); // Very quick sync for player addition
+    }
   };
 
   const removePlayer = (id) => {
@@ -987,6 +1003,13 @@ const BoardGameTimer = () => {
     }, [updatePlayerName]
   );
 
+  // Helper function to mark local actions for optimistic updates
+  const markLocalAction = () => {
+    const now = Date.now();
+    lastLocalActionRef.current = now;
+    ignoreUpdatesUntilRef.current = now + 1500; // Ignore Firebase updates for 1.5 seconds
+  };
+
 
   // Firebase sync functions with local fallback
   const syncGameStateToFirebase = async () => {
@@ -1001,7 +1024,9 @@ const BoardGameTimer = () => {
       initialTime,
       currentGameName,
       lastUpdated: Date.now(),
-      hostId: playerId.current,
+      lastActionPlayerId: playerId.current, // Track who made the last action
+      authoritativeTimerPlayerId: authoritativeTimerPlayerId, // Track who owns the current timer
+      hostId: isHost ? playerId.current : undefined, // Only set hostId if this player is the host
       allowGuestControl,
       allowGuestNames
     };
@@ -1038,32 +1063,53 @@ const BoardGameTimer = () => {
       const data = snapshot.val();
       
       // If game data doesn't exist, it means host finished the game and removed it
-      if (!data && !isHostUser) {
-        Alert.alert(
-          'Game Ended',
-          'The host has finished the game. You have been disconnected.',
-          [
-            {
-              text: 'OK',
-              onPress: () => {
-                // Reset everything and return to home
-                performReset();
-                setCurrentScreen('home');
-                setGameId('');
-                setIsHost(false);
-                setIsHostUser(false);
-                setConnectionStatus('disconnected');
-                setIsOnline(false);
+      // Kick out all players except the one who just removed it (the host who called finishGame)
+      if (!data) {
+        // Only show alert if we're not currently finishing the game ourselves
+        // (i.e., if we're not the host who just called finishGame)
+        if (currentScreen !== 'home') {
+          Alert.alert(
+            'Game Ended',
+            'The host has finished the game. You have been disconnected.',
+            [
+              {
+                text: 'OK',
+                onPress: () => {
+                  // Reset everything and return to home
+                  performReset();
+                  setCurrentScreen('home');
+                  setGameId('');
+                  setIsHost(false);
+                  setIsHostUser(false);
+                  setConnectionStatus('disconnected');
+                  setIsOnline(false);
+                }
               }
-            }
-          ]
-        );
+            ]
+          );
+        }
         return;
       }
       
       if (data && data.lastUpdated) {
-        // Update if this change came from another player
-        if (data.hostId !== playerId.current) {
+        const now = Date.now();
+        
+        // Ignore updates if we just made a local action (optimistic updates)
+        if (now < ignoreUpdatesUntilRef.current) {
+          console.log('Ignoring Firebase update due to recent local action');
+          setConnectionStatus('connected');
+          setIsOnline(true);
+          return;
+        }
+        
+        // Update if this change came from another player AND we haven't made a conflicting local action
+        if (data.lastActionPlayerId !== playerId.current) {
+          // Additional check: if the update is very recent and we just made an action, prioritize our action
+          if (data.lastActionPlayerId && data.lastUpdated > lastLocalActionRef.current && 
+              now - lastLocalActionRef.current < 2000) {
+            console.log('Conflict detected: remote action is newer, accepting remote state');
+          }
+          
           // Batch updates to prevent multiple re-renders
           const updates = {
             players: data.players || [],
@@ -1078,11 +1124,31 @@ const BoardGameTimer = () => {
             isHostUser: data.hostId === playerId.current
           };
           
-          // Apply all updates at once
+          // Apply all updates at once, but protect currently editing player and authoritative timer
+          if (editingPlayerId !== null) {
+            // Merge players but keep the currently editing player's name
+            const currentEditingPlayer = players.find(p => p.id === editingPlayerId);
+            if (currentEditingPlayer) {
+              updates.players = updates.players.map(p => 
+                p.id === editingPlayerId ? { ...p, name: currentEditingPlayer.name } : p
+              );
+            }
+          }
+          
+          // If we are the authoritative timer owner, don't let others overwrite our timer count
+          if (data.authoritativeTimerPlayerId === playerId.current && activePlayerId !== null) {
+            const currentActivePlayer = players.find(p => p.id === activePlayerId);
+            if (currentActivePlayer) {
+              updates.players = updates.players.map(p => 
+                p.id === activePlayerId ? { ...p, time: currentActivePlayer.time } : p
+              );
+            }
+          }
           setPlayers(updates.players);
           setActivePlayerId(updates.activePlayerId);
           setIsRunning(updates.isRunning);
           setGameStarted(updates.gameStarted);
+          setCurrentGameName(updates.currentGameName);
           setAllowGuestControl(updates.allowGuestControl);
           setAllowGuestNames(updates.allowGuestNames);
           setIsHostUser(updates.isHostUser);
@@ -1112,6 +1178,9 @@ const BoardGameTimer = () => {
 
   const startPlayerTurn = (newPlayerId) => {
     // Timer controls always work - no restrictions needed for clicking timers
+    
+    // Mark this as a local action for optimistic updates
+    markLocalAction();
     
     // If clicking the active player, toggle pause/resume
     if (newPlayerId === activePlayerId && gameStarted) {
@@ -1158,6 +1227,9 @@ const BoardGameTimer = () => {
     setIsRunning(true); // Always start timer when switching to a player
     setGameStarted(true);
     
+    // Make this player the authoritative timer owner
+    setAuthoritativeTimerPlayerId(playerId.current);
+    
     // Play turn sound if enabled
     if (playTurnSounds) {
       playTurnSound();
@@ -1175,6 +1247,9 @@ const BoardGameTimer = () => {
   };
 
   const pauseGame = () => {
+    // Mark this as a local action for optimistic updates
+    markLocalAction();
+    
     saveStateForUndo(); // Save state for undo
     // Store the last active player for resume
     if (activePlayerId) {
@@ -1196,6 +1271,7 @@ const BoardGameTimer = () => {
     }
     setIsRunning(false);
     setActivePlayerId(null);
+    setAuthoritativeTimerPlayerId(null); // Clear authoritative timer owner
     
     // Immediately sync pause state to Firebase for multiplayer
     if (firebase && gameId) {
@@ -1206,6 +1282,9 @@ const BoardGameTimer = () => {
   };
   
   const resumeGame = () => {
+    // Mark this as a local action for optimistic updates
+    markLocalAction();
+    
     // Resume with the last active player if no current active player
     const playerToResume = activePlayerId || lastActivePlayerId;
     if (playerToResume !== null) {
@@ -1219,6 +1298,9 @@ const BoardGameTimer = () => {
         })));
       }
       setIsRunning(true);
+      
+      // Make this player the authoritative timer owner when resuming
+      setAuthoritativeTimerPlayerId(playerId.current);
       
       // Immediately sync resume state to Firebase for multiplayer
       if (firebase && gameId) {
