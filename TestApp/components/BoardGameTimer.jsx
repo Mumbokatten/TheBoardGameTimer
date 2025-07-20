@@ -420,15 +420,6 @@ const GameScreen = ({
             ]}
           >
             <View style={styles.playerHeader}>
-              <TextInput
-                key={`player-name-${player.id}`}
-                style={styles.playerNameInput}
-                value={player.name}
-                onChangeText={handlePlayerNameChange(player.id)}
-                autoComplete="off"
-                selectTextOnFocus={true}
-                editable={true}
-              />
               <View style={styles.playerControls}>
                 <TouchableOpacity 
                   style={[styles.colorButton, { backgroundColor: player.color }]}
@@ -445,6 +436,16 @@ const GameScreen = ({
                 )}
               </View>
             </View>
+            
+            <TextInput
+              key={`player-name-${player.id}`}
+              style={styles.playerNameInput}
+              value={player.name}
+              onChangeText={handlePlayerNameChange(player.id)}
+              autoComplete="off"
+              selectTextOnFocus={true}
+              editable={true}
+            />
             
             {showColorPicker === player.id && (
               <View style={styles.colorPicker}>
@@ -2013,9 +2014,10 @@ const styles = StyleSheet.create({
   },
   playerHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 8,
+    minHeight: 32,
   },
   playerControls: {
     flexDirection: 'row',
@@ -2076,15 +2078,15 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 16,
     fontWeight: '600',
-    flex: 1,
+    width: '100%', // Take full width now that controls are above
     padding: 8,
     borderRadius: 4,
     backgroundColor: 'rgba(0, 0, 0, 0.2)',
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.3)',
     minHeight: 36,
-    maxWidth: '60%', // Prevent text input from taking all space
-    marginRight: 8, // Add space between input and buttons
+    marginBottom: 12, // Space below name input
+    textAlign: 'center', // Center the player name
     outlineStyle: 'none',
     cursor: 'text',
     pointerEvents: 'auto',
