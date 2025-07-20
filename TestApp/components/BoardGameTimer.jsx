@@ -172,12 +172,13 @@ const JoinGameScreen = ({
   joinGameId, 
   handleJoinGameIdChange, 
   joinGame, 
-  setCurrentScreen 
+  setCurrentScreen,
+  theme
 }) => (
-  <ScrollView contentContainerStyle={styles.container}>
+  <ScrollView contentContainerStyle={[styles.container, theme === 'light' && styles.lightContainer]}>
     <View style={styles.header}>
-      <Text style={styles.title}>📱 Join Game</Text>
-      <Text style={styles.subtitle}>Enter the 6-character game ID to join</Text>
+      <Text style={[styles.title, theme === 'light' && styles.lightText]}>📱 Join Game</Text>
+      <Text style={[styles.subtitle, theme === 'light' && styles.lightSubtext]}>Enter the 6-character game ID to join</Text>
     </View>
 
     <View style={styles.inputContainer}>
@@ -209,10 +210,10 @@ const JoinGameScreen = ({
   </ScrollView>
 );
 
-const GameHistoryScreen = ({ gameHistory, setCurrentScreen, formatTime, deleteGame, loadSavedGame }) => (
-  <ScrollView contentContainerStyle={styles.container}>
+const GameHistoryScreen = ({ gameHistory, setCurrentScreen, formatTime, deleteGame, loadSavedGame, theme }) => (
+  <ScrollView contentContainerStyle={[styles.container, theme === 'light' && styles.lightContainer]}>
     <View style={styles.headerRow}>
-      <Text style={styles.title}>🏆 Game History</Text>
+      <Text style={[styles.title, theme === 'light' && styles.lightText]}>🏆 Game History</Text>
       <TouchableOpacity style={styles.backButton} onPress={() => setCurrentScreen('home')}>
         <Text style={styles.backButtonText}>🏠 Home</Text>
       </TouchableOpacity>
@@ -220,8 +221,8 @@ const GameHistoryScreen = ({ gameHistory, setCurrentScreen, formatTime, deleteGa
 
     {gameHistory.length === 0 ? (
       <View style={styles.emptyState}>
-        <Text style={styles.emptyTitle}>No games saved yet</Text>
-        <Text style={styles.emptySubtitle}>Play a game and save it to see it here!</Text>
+        <Text style={[styles.emptyTitle, theme === 'light' && styles.lightText]}>No games saved yet</Text>
+        <Text style={[styles.emptySubtitle, theme === 'light' && styles.lightSubtext]}>Play a game and save it to see it here!</Text>
       </View>
     ) : (
       <View style={styles.historyList}>
@@ -229,8 +230,8 @@ const GameHistoryScreen = ({ gameHistory, setCurrentScreen, formatTime, deleteGa
           <View key={game.id} style={styles.historyCard}>
             <View style={styles.historyHeader}>
               <View style={styles.historyHeaderText}>
-                <Text style={styles.historyGameName}>{game.name}</Text>
-                <Text style={styles.historyDate}>{new Date(game.date).toLocaleDateString()}</Text>
+                <Text style={[styles.historyGameName, theme === 'light' && styles.lightText]}>{game.name}</Text>
+                <Text style={[styles.historyDate, theme === 'light' && styles.lightSubtext]}>{new Date(game.date).toLocaleDateString()}</Text>
               </View>
               <TouchableOpacity 
                 style={styles.deleteGameButton}
@@ -240,7 +241,7 @@ const GameHistoryScreen = ({ gameHistory, setCurrentScreen, formatTime, deleteGa
               </TouchableOpacity>
             </View>
             
-            <Text style={styles.historyTotal}>Total Time: {formatTime(game.totalTime)}</Text>
+            <Text style={[styles.historyTotal, theme === 'light' && styles.lightText]}>Total Time: {formatTime(game.totalTime)}</Text>
             
             <View style={styles.historyPlayers}>
               {game.players.map((player, idx) => (
@@ -771,10 +772,7 @@ const BoardGameTimer = () => {
     setCurrentScreen('game');
     
     // Force fresh start - always 0 for new games
-    setIsRunning(false);
-    setActivePlayerId(null);
-    setLastActivePlayerId(null);
-    setGameStarted(false);
+    performReset(true); // Force zero for new games
     setPlayers([
       { id: 1, name: 'Player 1', time: 0, isActive: false, color: PLAYER_COLORS[0].value, turns: 0, totalTurnTime: 0, turnStartTime: null },
       { id: 2, name: 'Player 2', time: 0, isActive: false, color: PLAYER_COLORS[1].value, turns: 0, totalTurnTime: 0, turnStartTime: null }
@@ -1276,16 +1274,16 @@ const BoardGameTimer = () => {
     }
   };
 
-  const performReset = () => {
-    console.log('Performing reset');
+  const performReset = (forceZero = false) => {
+    console.log('Performing reset, forceZero:', forceZero);
     setIsRunning(false);
     setActivePlayerId(null);
     setLastActivePlayerId(null);
     setGameStarted(false);
     
-    // For create new game, always reset to 0 regardless of timer mode
+    // For create new game or when explicitly requested, always use 0
     // For manual reset during game, respect timer mode
-    const resetTime = timerMode === 'countdown' ? initialTime : 0;
+    const resetTime = forceZero ? 0 : (timerMode === 'countdown' ? initialTime : 0);
     
     setPlayers(prev => prev.map(player => ({
       ...player,
@@ -1777,6 +1775,7 @@ const BoardGameTimer = () => {
           formatTime={formatTime}
           deleteGame={deleteGame}
           loadSavedGame={loadSavedGame}
+          theme={theme}
         />
       )}
       {currentScreen === 'join' && (
@@ -1785,6 +1784,7 @@ const BoardGameTimer = () => {
           handleJoinGameIdChange={handleJoinGameIdChange}
           joinGame={joinGame}
           setCurrentScreen={setCurrentScreen}
+          theme={theme}
         />
       )}
     </View>
