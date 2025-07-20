@@ -439,15 +439,21 @@ const GameScreen = ({
             
             <TextInput
               key={`player-name-${player.id}`}
-              style={styles.playerNameInput}
+              style={[
+                styles.playerNameInput,
+                {
+                  fontSize: player.name.length > 15 ? (player.name.length > 20 ? 12 : 14) : 16,
+                  lineHeight: player.name.length > 15 ? (player.name.length > 20 ? 14 : 16) : 20,
+                }
+              ]}
               value={player.name}
               onChangeText={handlePlayerNameChange(player.id)}
               autoComplete="off"
               selectTextOnFocus={true}
               editable={true}
-              maxLength={30}
+              maxLength={24}
               multiline={true}
-              numberOfLines={2}
+              scrollEnabled={false}
               placeholder="Enter player name"
               placeholderTextColor="rgba(255, 255, 255, 0.5)"
             />
@@ -2081,7 +2087,7 @@ const styles = StyleSheet.create({
   },
   playerNameInput: {
     color: '#ffffff',
-    fontSize: 16,
+    fontSize: 16, // Base font size - will be overridden dynamically
     fontWeight: '600',
     width: '100%', // Take full width now that controls are above
     padding: 8,
@@ -2089,12 +2095,11 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.2)',
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.3)',
-    minHeight: 36,
-    maxHeight: 72, // Allow for 2 lines of text
+    height: 50, // Fixed height - no growing
     marginBottom: 12, // Space below name input
     textAlign: 'center', // Center the player name
     textAlignVertical: 'center', // Center vertically
-    lineHeight: 20, // Better line spacing
+    lineHeight: 20, // Base line height - will be overridden dynamically
     outlineStyle: 'none',
     cursor: 'text',
     pointerEvents: 'auto',
