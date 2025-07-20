@@ -289,6 +289,7 @@ const GameScreen = ({
   saveGame,
   resetGame,
   finishGame,
+  leaveGame,
   players,
   getPlayerGridCols,
   showColorPicker,
@@ -404,6 +405,15 @@ const GameScreen = ({
           onPress={resetGame}
         >
           <Text style={styles.controlButtonText}>🔄 Reset</Text>
+        </TouchableOpacity>
+      )}
+      
+      {gameId && firebase && (
+        <TouchableOpacity 
+          style={[styles.controlButton, styles.leaveButton]} 
+          onPress={leaveGame}
+        >
+          <Text style={styles.controlButtonText}>🚪 Leave Game</Text>
         </TouchableOpacity>
       )}
     </View>
@@ -943,11 +953,14 @@ const BoardGameTimer = () => {
   };
 
   const updatePlayerName = useCallback((id, name) => {
-    // Check permissions first
-    if (!isHostUser && !allowGuestNames) {
+    // Check permissions only in multiplayer mode when connected to Firebase
+    if (firebase && gameId && !isHostUser && !allowGuestNames) {
       Alert.alert('Not Allowed', 'The host has disabled guest name editing.');
       return;
     }
+    
+    // Mark this as a local action for optimistic updates
+    markLocalAction();
     
     // Update player name immediately
     setPlayers(prev => prev.map(player => 
@@ -963,8 +976,8 @@ const BoardGameTimer = () => {
   }, [isHostUser, allowGuestNames, firebase, gameId]);
 
   const updatePlayerColor = useCallback((playerId, color) => {
-    // Check guest permissions for changing player colors (use allowGuestNames for colors too)
-    if (!isHostUser && !allowGuestNames) {
+    // Check guest permissions for changing player colors only in multiplayer mode
+    if (firebase && gameId && !isHostUser && !allowGuestNames) {
       Alert.alert('Not Allowed', 'The host has disabled guest name and color editing.');
       return;
     }
@@ -975,11 +988,14 @@ const BoardGameTimer = () => {
   }, [isHostUser, allowGuestNames]);
 
   const handleGameNameChange = useCallback((text) => {
-    // Check permissions first
-    if (!isHostUser && !allowGuestNames) {
+    // Check permissions only in multiplayer mode when connected to Firebase
+    if (firebase && gameId && !isHostUser && !allowGuestNames) {
       Alert.alert('Not Allowed', 'The host has disabled guest name editing.');
       return;
     }
+    
+    // Mark this as a local action for optimistic updates
+    markLocalAction();
     
     // Update game name immediately
     setCurrentGameName(text);
@@ -1026,14 +1042,25 @@ const BoardGameTimer = () => {
       lastUpdated: Date.now(),
       lastActionPlayerId: playerId.current, // Track who made the last action
       authoritativeTimerPlayerId: authoritativeTimerPlayerId, // Track who owns the current timer
-      hostId: isHost ? playerId.current : undefined, // Only set hostId if this player is the host
       allowGuestControl,
       allowGuestNames
     };
 
+    // Only set hostId if this player is the host, otherwise preserve existing hostId
+    if (isHost) {
+      gameData.hostId = playerId.current;
+    }
+
     if (firebase && firebase.database) {
       try {
-        await firebase.set(firebase.ref(firebase.database, `games/${gameId}`), gameData);
+        if (isHost) {
+          // Host can set the entire game data including hostId
+          await firebase.set(firebase.ref(firebase.database, `games/${gameId}`), gameData);
+        } else {
+          // Guests use update to avoid overwriting hostId
+          const gameRef = firebase.ref(firebase.database, `games/${gameId}`);
+          await firebase.update(gameRef, gameData);
+        }
         setConnectionStatus('connected');
         setIsOnline(true);
         return;
@@ -1107,7 +1134,10 @@ const BoardGameTimer = () => {
           // Additional check: if the update is very recent and we just made an action, prioritize our action
           if (data.lastActionPlayerId && data.lastUpdated > lastLocalActionRef.current && 
               now - lastLocalActionRef.current < 2000) {
-            console.log('Conflict detected: remote action is newer, accepting remote state');
+            console.log('Conflict detected: remote action is newer, but prioritizing our recent local action');
+            setConnectionStatus('connected');
+            setIsOnline(true);
+            return; // Don't apply remote updates if we have a recent local action
           }
           
           // Batch updates to prevent multiple re-renders
@@ -1151,7 +1181,11 @@ const BoardGameTimer = () => {
           setCurrentGameName(updates.currentGameName);
           setAllowGuestControl(updates.allowGuestControl);
           setAllowGuestNames(updates.allowGuestNames);
-          setIsHostUser(updates.isHostUser);
+          
+          // Only update host status in multiplayer games
+          if (gameId && firebase) {
+            setIsHostUser(updates.isHostUser);
+          }
         }
         setConnectionStatus('connected');
         setIsOnline(true);
@@ -1439,6 +1473,42 @@ const BoardGameTimer = () => {
     Alert.alert('Game Reset', 'The game has been reset successfully.');
   };
 
+  const leaveGame = () => {
+    showAlert(
+      'Leave Game',
+      'Are you sure you want to leave this game? You will lose connection and return to the main menu.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Leave Game',
+          style: 'destructive',
+          onPress: () => {
+            // Clear all game state and return to home
+            setCurrentScreen('home');
+            setGameId('');
+            setIsHost(false);
+            setIsHostUser(false);
+            setConnectionStatus('disconnected');
+            setIsOnline(false);
+            setGameStarted(false);
+            setIsRunning(false);
+            setActivePlayerId(null);
+            setLastActivePlayerId(null);
+            setCurrentGameName('');
+            
+            // Reset players to default
+            setPlayers([
+              { id: 1, name: 'Player 1', time: 0, isActive: false, color: PLAYER_COLORS[0].value, turns: 0, totalTurnTime: 0, turnStartTime: null },
+              { id: 2, name: 'Player 2', time: 0, isActive: false, color: PLAYER_COLORS[1].value, turns: 0, totalTurnTime: 0, turnStartTime: null }
+            ]);
+            
+            Alert.alert('Left Game', 'You have successfully left the game and returned to the main menu.');
+          }
+        }
+      ]
+    );
+  };
+
   const finishGame = async () => {
     if (!gameStarted) return;
     
@@ -1604,8 +1674,9 @@ const BoardGameTimer = () => {
             // Reset current game state but keep it as a new session
             setGameId(''); // New session, no multiplayer ID
             setIsHost(false);
-            setIsHostUser(true);
+            setIsHostUser(true); // Always host in local games
             setAllowGuestControl(false);
+            setAllowGuestNames(true); // Allow name editing in local games
             
             // Load saved game data with new session naming
             const loadedPlayers = game.players.map((p, index) => ({
@@ -1917,6 +1988,7 @@ const BoardGameTimer = () => {
           saveGame={saveGame}
           resetGame={resetGame}
           finishGame={finishGame}
+          leaveGame={leaveGame}
           players={players}
           getPlayerGridCols={getPlayerGridCols}
           showColorPicker={showColorPicker}
@@ -2245,6 +2317,9 @@ const styles = StyleSheet.create({
   },
   resetButton: {
     backgroundColor: '#ef4444',
+  },
+  leaveButton: {
+    backgroundColor: '#dc2626',
   },
   undoButton: {
     backgroundColor: '#f59e0b',
