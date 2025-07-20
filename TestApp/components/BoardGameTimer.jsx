@@ -840,11 +840,37 @@ const BoardGameTimer = () => {
     }
     
     if (players.length > 2) {
-      saveStateForUndo(); // Save state for undo
-      setPlayers(players.filter(p => p.id !== id));
-      if (activePlayerId === id) {
-        setActivePlayerId(null);
-        setIsRunning(false);
+      const playerToRemove = players.find(p => p.id === id);
+      
+      // Check if player has been actively used (has timer data)
+      if (playerToRemove && (playerToRemove.time > 0 || playerToRemove.turns > 0)) {
+        showAlert(
+          'Remove Player',
+          `Remove "${playerToRemove.name}" who has ${formatTime(playerToRemove.time)} recorded? This cannot be undone.`,
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Remove',
+              style: 'destructive',
+              onPress: () => {
+                saveStateForUndo(); // Save state for undo
+                setPlayers(players.filter(p => p.id !== id));
+                if (activePlayerId === id) {
+                  setActivePlayerId(null);
+                  setIsRunning(false);
+                }
+              }
+            }
+          ]
+        );
+      } else {
+        // No confirmation needed for unused players
+        saveStateForUndo(); // Save state for undo
+        setPlayers(players.filter(p => p.id !== id));
+        if (activePlayerId === id) {
+          setActivePlayerId(null);
+          setIsRunning(false);
+        }
       }
     }
   };
@@ -2057,6 +2083,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.3)',
     minHeight: 36,
+    maxWidth: '60%', // Prevent text input from taking all space
+    marginRight: 8, // Add space between input and buttons
     outlineStyle: 'none',
     cursor: 'text',
     pointerEvents: 'auto',
