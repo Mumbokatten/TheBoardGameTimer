@@ -71,7 +71,8 @@ const HomeScreen = ({
   gameHistory, 
   createNewGame, 
   setCurrentScreen, 
-  setShowSettings 
+  setShowSettings,
+  deleteGame
 }) => (
   <ScrollView contentContainerStyle={[styles.container, theme === 'light' && styles.lightContainer]}>
     <View style={styles.header}>
@@ -121,8 +122,16 @@ const HomeScreen = ({
         <Text style={[styles.sectionTitle, theme === 'light' && styles.lightText]}>Recent Games</Text>
         {gameHistory.slice(0, 3).map(game => (
           <View key={game.id} style={styles.gameHistoryItem}>
-            <Text style={[styles.gameName, theme === 'light' && styles.lightText]}>{game.name}</Text>
-            <Text style={[styles.gameDate, theme === 'light' && styles.lightSubtext]}>{new Date(game.date).toLocaleDateString()}</Text>
+            <View style={styles.gameHistoryText}>
+              <Text style={[styles.gameName, theme === 'light' && styles.lightText]}>{game.name}</Text>
+              <Text style={[styles.gameDate, theme === 'light' && styles.lightSubtext]}>{new Date(game.date).toLocaleDateString()}</Text>
+            </View>
+            <TouchableOpacity 
+              style={styles.deleteGameButton}
+              onPress={() => deleteGame(game.id)}
+            >
+              <Text style={styles.deleteGameText}>🗑️</Text>
+            </TouchableOpacity>
           </View>
         ))}
       </View>
@@ -171,7 +180,7 @@ const JoinGameScreen = ({
   </ScrollView>
 );
 
-const GameHistoryScreen = ({ gameHistory, setCurrentScreen, formatTime }) => (
+const GameHistoryScreen = ({ gameHistory, setCurrentScreen, formatTime, deleteGame, loadSavedGame }) => (
   <ScrollView contentContainerStyle={styles.container}>
     <View style={styles.headerRow}>
       <Text style={styles.title}>🏆 Game History</Text>
@@ -190,8 +199,16 @@ const GameHistoryScreen = ({ gameHistory, setCurrentScreen, formatTime }) => (
         {gameHistory.map(game => (
           <View key={game.id} style={styles.historyCard}>
             <View style={styles.historyHeader}>
-              <Text style={styles.historyGameName}>{game.name}</Text>
-              <Text style={styles.historyDate}>{new Date(game.date).toLocaleDateString()}</Text>
+              <View style={styles.historyHeaderText}>
+                <Text style={styles.historyGameName}>{game.name}</Text>
+                <Text style={styles.historyDate}>{new Date(game.date).toLocaleDateString()}</Text>
+              </View>
+              <TouchableOpacity 
+                style={styles.deleteGameButton}
+                onPress={() => deleteGame(game.id)}
+              >
+                <Text style={styles.deleteGameText}>🗑️</Text>
+              </TouchableOpacity>
             </View>
             
             <Text style={styles.historyTotal}>Total Time: {formatTime(game.totalTime)}</Text>
@@ -202,6 +219,15 @@ const GameHistoryScreen = ({ gameHistory, setCurrentScreen, formatTime }) => (
                   {player.name}: {player.formattedTime}
                 </Text>
               ))}
+            </View>
+            
+            <View style={styles.historyActions}>
+              <TouchableOpacity 
+                style={styles.continueGameButton}
+                onPress={() => loadSavedGame(game)}
+              >
+                <Text style={styles.continueGameText}>▶️ Continue</Text>
+              </TouchableOpacity>
             </View>
           </View>
         ))}
@@ -239,9 +265,11 @@ const GameScreen = ({
   timerMode,
   formatTime,
   getAverageTurnTime,
-  startPlayerTurn
+  startPlayerTurn,
+  lastActionState,
+  undoLastAction
 }) => (
-  <View style={styles.container}>
+  <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
     <View style={styles.headerRow}>
       <View>
         <Text style={styles.title}>
@@ -317,15 +345,14 @@ const GameScreen = ({
       
       {gameStarted && (
         <>
-          <TouchableOpacity 
-            style={[styles.controlButton, styles.nextButton]} 
-            onPress={nextPlayer}
-          >
-            <Text style={styles.controlButtonText}>⏭️ Next</Text>
-          </TouchableOpacity>
           <TouchableOpacity style={[styles.controlButton, styles.saveButton]} onPress={saveGame}>
             <Text style={styles.controlButtonText}>💾 Save</Text>
           </TouchableOpacity>
+          {lastActionState && (
+            <TouchableOpacity style={[styles.controlButton, styles.undoButton]} onPress={undoLastAction}>
+              <Text style={styles.controlButtonText}>↶ Undo</Text>
+            </TouchableOpacity>
+          )}
         </>
       )}
       
@@ -440,17 +467,26 @@ const GameScreen = ({
                   backgroundColor: player.isActive && isRunning ? player.color : player.color + '80',
                   borderColor: player.color,
                   borderWidth: 2
-                }
+                },
+                getPlayerGridCols() > 2 && styles.playerButtonCompact
               ]}
               onPress={() => startPlayerTurn(player.id)}
-              disabled={player.isActive && isRunning}
             >
-              <Text style={[
-                styles.playerButtonText,
-                { color: player.isActive && isRunning ? '#ffffff' : '#ffffff' }
-              ]}>
-                {player.isActive && isRunning ? '⏸️ Active Turn' : '▶️ Start Turn'}
-              </Text>
+              <View style={styles.playerButtonContent}>
+                <Text style={[
+                  styles.playerButtonText,
+                  getPlayerGridCols() > 2 && styles.playerButtonTextCompact,
+                  { color: player.isActive && isRunning ? '#ffffff' : '#ffffff' }
+                ]}>
+                  {player.isActive && isRunning ? '⏸️ Active' : '▶️ Start'}
+                </Text>
+                <Text style={[
+                  styles.playerButtonTime,
+                  getPlayerGridCols() > 2 && styles.playerButtonTimeCompact
+                ]}>
+                  {formatTime(player.time)}
+                </Text>
+              </View>
             </TouchableOpacity>
           </View>
         );
@@ -480,7 +516,7 @@ const GameScreen = ({
         </View>
       </View>
     )}
-  </View>
+  </ScrollView>
 );
 
 const BoardGameTimer = () => {
@@ -507,6 +543,11 @@ const BoardGameTimer = () => {
   const [theme, setTheme] = useState('dark');
   const [playTurnSounds, setPlayTurnSounds] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
+  const [lastActionState, setLastActionState] = useState(null); // For undo functionality
+  const [isOfflineMode, setIsOfflineMode] = useState(false);
+  const [allowGuestControl, setAllowGuestControl] = useState(false);
+  const [isHostUser, setIsHostUser] = useState(true);
+  const [lastActivePlayerId, setLastActivePlayerId] = useState(null);
   
   const [showColorPicker, setShowColorPicker] = useState(null);
   
@@ -516,20 +557,74 @@ const BoardGameTimer = () => {
   const gameNameDebounceRef = useRef();
   const joinGameIdDebounceRef = useRef();
   const playerNameDebounceRefs = useRef({});
+  const autoSaveRef = useRef();
+  const lastActiveTimeRef = useRef(Date.now());
+  const wasRunningRef = useRef(false);
+
+  // Auto-save state every 30 seconds
+  useEffect(() => {
+    if (gameStarted) {
+      autoSaveRef.current = setInterval(() => {
+        autoSaveGameState();
+      }, 30000); // Auto-save every 30 seconds
+    }
+    return () => {
+      if (autoSaveRef.current) {
+        clearInterval(autoSaveRef.current);
+      }
+    };
+  }, [gameStarted, players, activePlayerId, isRunning, currentGameName]);
+
+  // Load saved state on app start
+  useEffect(() => {
+    loadSavedState();
+    loadGameHistory();
+  }, []);
+
+  // Handle page visibility for background timer support - simplified for mobile
+  useEffect(() => {
+    if (typeof document === 'undefined') return; // Skip on mobile if needed
+    
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        lastActiveTimeRef.current = Date.now();
+        wasRunningRef.current = isRunning;
+      } else if (wasRunningRef.current && activePlayerId && gameStarted) {
+        const timeAway = Math.floor((Date.now() - lastActiveTimeRef.current) / 1000);
+        if (timeAway > 1) { // Only update if significant time passed
+          setPlayers(prev => prev.map(player => 
+            player.id === activePlayerId ? {
+              ...player,
+              time: timerMode === 'countup' ? player.time + timeAway : Math.max(0, player.time - timeAway)
+            } : player
+          ));
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [isRunning, activePlayerId, gameStarted, timerMode]);
 
   // Timer effect
   useEffect(() => {
     if (isRunning && activePlayerId !== null) {
       intervalRef.current = setInterval(() => {
-        setPlayers(prev => prev.map(player => {
-          if (player.id === activePlayerId) {
-            const newTime = timerMode === 'countup' 
-              ? player.time + 1 
-              : Math.max(0, player.time - 1);
-            return { ...player, time: newTime };
-          }
-          return player;
-        }));
+        setPlayers(prev => {
+          const updated = prev.map(player => {
+            if (player.id === activePlayerId) {
+              const newTime = timerMode === 'countup' 
+                ? player.time + 1 
+                : Math.max(0, player.time - 1);
+              return { ...player, time: newTime };
+            }
+            return player;
+          });
+          
+          // Only update if actually changed
+          const hasChanged = updated.some((player, index) => player.time !== prev[index].time);
+          return hasChanged ? updated : prev;
+        });
       }, 1000);
     } else {
       clearInterval(intervalRef.current);
@@ -539,23 +634,46 @@ const BoardGameTimer = () => {
   }, [isRunning, activePlayerId, timerMode]);
 
 
-  // Firebase game state sync effect (immediate for game controls, debounced only for text)
+  // Firebase game state sync effect - simplified for mobile
+  const lastSyncRef = useRef('');
+  const syncTimeoutRef = useRef();
+  
   useEffect(() => {
     if (firebase && gameId && isHost) {
-      syncGameStateToFirebase();
-    }
-  }, [players, activePlayerId, isRunning, gameStarted, timerMode, initialTime]);
-
-  // Separate debounced sync for text changes only
-  useEffect(() => {
-    if (firebase && gameId && isHost) {
-      const timeoutId = setTimeout(() => {
+      // Debounce all syncs to prevent loops
+      clearTimeout(syncTimeoutRef.current);
+      syncTimeoutRef.current = setTimeout(() => {
         syncGameStateToFirebase();
-      }, 1500); // Only debounce text changes
-
-      return () => clearTimeout(timeoutId);
+      }, 500);
     }
-  }, [currentGameName]);
+    
+    return () => clearTimeout(syncTimeoutRef.current);
+  }, [gameId, isHost]); // Minimal dependencies
+  
+  // Separate effect for timer state changes - allow from anyone
+  useEffect(() => {
+    if (firebase && gameId && gameStarted) {
+      clearTimeout(syncTimeoutRef.current);
+      syncTimeoutRef.current = setTimeout(() => {
+        syncGameStateToFirebase();
+      }, 1000);
+    }
+    
+    return () => clearTimeout(syncTimeoutRef.current);
+  }, [activePlayerId, isRunning]); // Timer changes sync from anyone
+
+  // Text changes and settings sync - simplified
+  const gameNameTimeoutRef = useRef();
+  useEffect(() => {
+    if (firebase && gameId && isHost) {
+      clearTimeout(gameNameTimeoutRef.current);
+      gameNameTimeoutRef.current = setTimeout(() => {
+        syncGameStateToFirebase();
+      }, 2000);
+    }
+    
+    return () => clearTimeout(gameNameTimeoutRef.current);
+  }, [currentGameName, allowGuestControl]);
 
   // Firebase listener effect
   useEffect(() => {
@@ -564,8 +682,8 @@ const BoardGameTimer = () => {
       syncPlayerJoin();
       
       return () => {
-        if (unsubscribe) {
-          firebase.off(unsubscribe);
+        if (unsubscribe && typeof unsubscribe === 'function') {
+          unsubscribe();
         }
       };
     }
@@ -660,6 +778,13 @@ const BoardGameTimer = () => {
   };
 
   const addPlayer = () => {
+    // Check guest permissions for adding players
+    if (!isHostUser && !allowGuestControl) {
+      Alert.alert('Not Allowed', 'The host has disabled guest control.');
+      return;
+    }
+    
+    saveStateForUndo(); // Save state for undo
     const newId = Math.max(...players.map(p => p.id)) + 1;
     const newPlayer = {
       id: newId,
@@ -675,7 +800,14 @@ const BoardGameTimer = () => {
   };
 
   const removePlayer = (id) => {
+    // Check guest permissions for removing players
+    if (!isHostUser && !allowGuestControl) {
+      Alert.alert('Not Allowed', 'The host has disabled guest control.');
+      return;
+    }
+    
     if (players.length > 2) {
+      saveStateForUndo(); // Save state for undo
       setPlayers(players.filter(p => p.id !== id));
       if (activePlayerId === id) {
         setActivePlayerId(null);
@@ -685,21 +817,42 @@ const BoardGameTimer = () => {
   };
 
   const updatePlayerName = useCallback((id, name) => {
+    // Allow typing, update immediately
     setPlayers(prev => prev.map(player => 
       player.id === id ? { ...player, name } : player
     ));
-  }, []);
+    
+    // Check guest permissions and show warning if needed
+    if (!isHostUser && !allowGuestControl && name.length > 0) {
+      setTimeout(() => {
+        Alert.alert('Note', 'The host has disabled guest control. Your changes may not be saved.');
+      }, 1000);
+    }
+  }, [isHostUser, allowGuestControl]);
 
   const updatePlayerColor = useCallback((playerId, color) => {
+    // Check guest permissions for changing player colors
+    if (!isHostUser && !allowGuestControl) {
+      Alert.alert('Not Allowed', 'The host has disabled guest control.');
+      return;
+    }
+    
     setPlayers(prev => prev.map(player => 
       player.id === playerId ? { ...player, color } : player
     ));
-  }, []);
+  }, [isHostUser, allowGuestControl]);
 
   const handleGameNameChange = useCallback((text) => {
-    console.log('Game name changing:', text);
+    // Allow typing, but show warning after typing if not allowed
     setCurrentGameName(text);
-  }, []);
+    
+    // Check guest permissions after a delay
+    if (!isHostUser && !allowGuestControl && text.length > 0) {
+      setTimeout(() => {
+        Alert.alert('Note', 'The host has disabled guest control. Your changes may not be saved.');
+      }, 1000);
+    }
+  }, [isHostUser, allowGuestControl]);
 
   const handleJoinGameIdChange = useCallback((text) => {
     setJoinGameId(text.toUpperCase());
@@ -726,7 +879,8 @@ const BoardGameTimer = () => {
       initialTime,
       currentGameName,
       lastUpdated: Date.now(),
-      hostId: playerId.current
+      hostId: playerId.current,
+      allowGuestControl
     };
 
     if (firebase && firebase.database) {
@@ -760,18 +914,28 @@ const BoardGameTimer = () => {
     const unsubscribe = firebase.onValue(gameRef, (snapshot) => {
       const data = snapshot.val();
       if (data && data.lastUpdated) {
-        // Only update if this change came from another player
+        // Update if this change came from another player
         if (data.hostId !== playerId.current) {
-          setPlayers(data.players || []);
-          setActivePlayerId(data.activePlayerId);
-          setIsRunning(data.isRunning || false);
-          setGameStarted(data.gameStarted || false);
-          setTimerMode(data.timerMode || 'countup');
-          setInitialTime(data.initialTime || 600);
-          setCurrentGameName(data.currentGameName || '');
-          // setTempGameName(data.currentGameName || ''); // Removed - temp variable not needed
+          // Batch updates to prevent multiple re-renders
+          const updates = {
+            players: data.players || [],
+            activePlayerId: data.activePlayerId,
+            isRunning: data.isRunning || false,
+            gameStarted: data.gameStarted || false,
+            timerMode: data.timerMode || 'countup',
+            initialTime: data.initialTime || 600,
+            currentGameName: data.currentGameName || '',
+            allowGuestControl: data.allowGuestControl || false,
+            isHostUser: data.hostId === playerId.current
+          };
           
-          // Note: temp player names not needed in current implementation
+          // Apply all updates at once
+          setPlayers(updates.players);
+          setActivePlayerId(updates.activePlayerId);
+          setIsRunning(updates.isRunning);
+          setGameStarted(updates.gameStarted);
+          setAllowGuestControl(updates.allowGuestControl);
+          setIsHostUser(updates.isHostUser);
         }
         setConnectionStatus('connected');
         setIsOnline(true);
@@ -797,6 +961,19 @@ const BoardGameTimer = () => {
   };
 
   const startPlayerTurn = (newPlayerId) => {
+    // Timer controls always work - no restrictions needed for clicking timers
+    
+    // If clicking the active player, toggle pause/resume
+    if (newPlayerId === activePlayerId && gameStarted) {
+      if (isRunning) {
+        pauseGame();
+      } else {
+        resumeGame();
+      }
+      return;
+    }
+    
+    saveStateForUndo(); // Save state for undo
     const currentTime = Date.now();
     
     setPlayers(prev => prev.map(player => {
@@ -824,11 +1001,28 @@ const BoardGameTimer = () => {
     setActivePlayerId(newPlayerId);
     setIsRunning(true);
     setGameStarted(true);
+    
+    // Play turn sound if enabled
+    if (playTurnSounds) {
+      playTurnSound();
+    }
+    
+    // Vibrate on mobile if supported
+    if (navigator.vibrate) {
+      navigator.vibrate([100, 50, 100]); // Short vibration pattern
+    }
+    
+    // Sync to Firebase if available (timer actions sync for everyone)
+    if (firebase && gameId) {
+      syncGameStateToFirebase();
+    }
   };
 
   const pauseGame = () => {
-    // End current player's turn when pausing
+    saveStateForUndo(); // Save state for undo
+    // Store the last active player for resume
     if (activePlayerId) {
+      setLastActivePlayerId(activePlayerId);
       const currentTime = Date.now();
       setPlayers(prev => prev.map(player => {
         if (player.id === activePlayerId && player.isActive) {
@@ -848,18 +1042,121 @@ const BoardGameTimer = () => {
     setActivePlayerId(null);
   };
   
-  const resumeGame = () => { if (activePlayerId !== null) setIsRunning(true); };
+  const resumeGame = () => {
+    // Resume with the last active player if no current active player
+    const playerToResume = activePlayerId || lastActivePlayerId;
+    if (playerToResume !== null) {
+      if (!activePlayerId) {
+        // Restart the last active player's timer
+        setActivePlayerId(playerToResume);
+        setPlayers(prev => prev.map(player => ({
+          ...player,
+          isActive: player.id === playerToResume,
+          turnStartTime: player.id === playerToResume ? Date.now() : null
+        })));
+      }
+      setIsRunning(true);
+    }
+  };
 
   const nextPlayer = () => {
+    saveStateForUndo(); // Save state for undo
     const currentIndex = players.findIndex(p => p.id === activePlayerId);
     const nextIndex = (currentIndex + 1) % players.length;
     const nextPlayerId = players[nextIndex].id;
     startPlayerTurn(nextPlayerId);
   };
 
+  // Play turn sound
+  const playTurnSound = () => {
+    try {
+      // Create a simple beep sound using Web Audio API
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      oscillator.frequency.value = 800; // High beep
+      oscillator.type = 'sine';
+      
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+      
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.2);
+    } catch (error) {
+      console.log('Sound not supported:', error);
+    }
+  };
+
+  // Toggle theme
+  const toggleTheme = () => {
+    const newTheme = theme === 'dark' ? 'light' : 'dark';
+    setTheme(newTheme);
+    try {
+      localStorage.setItem('boardgame_theme', newTheme);
+    } catch (error) {
+      console.log('Failed to save theme:', error);
+    }
+  };
+
+  // Load theme on start
+  useEffect(() => {
+    try {
+      const savedTheme = localStorage.getItem('boardgame_theme');
+      if (savedTheme) {
+        setTheme(savedTheme);
+      }
+    } catch (error) {
+      console.log('Failed to load theme:', error);
+    }
+  }, []);
+
   const resetGame = () => {
+    if (gameStarted) {
+      Alert.alert(
+        'Reset Game',
+        'Do you want to save the current game before resetting?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Save & Reset',
+            onPress: () => {
+              saveGame();
+              performReset();
+            }
+          },
+          {
+            text: 'Reset Without Saving',
+            style: 'destructive',
+            onPress: () => {
+              Alert.alert(
+                'Are you sure?',
+                'This will permanently clear all timer data without saving.',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  {
+                    text: 'Reset',
+                    style: 'destructive',
+                    onPress: performReset
+                  }
+                ]
+              );
+            }
+          }
+        ]
+      );
+    } else {
+      performReset();
+    }
+  };
+
+  const performReset = () => {
     setIsRunning(false);
     setActivePlayerId(null);
+    setLastActivePlayerId(null);
     setGameStarted(false);
     const resetTime = timerMode === 'countdown' ? initialTime : 0;
     setPlayers(prev => prev.map(player => ({
@@ -870,6 +1167,73 @@ const BoardGameTimer = () => {
       totalTurnTime: 0,
       turnStartTime: null
     })));
+  };
+
+  // Auto-save current game state
+  const autoSaveGameState = () => {
+    if (!gameStarted) return;
+    
+    const gameState = {
+      players,
+      activePlayerId,
+      isRunning,
+      gameStarted,
+      timerMode,
+      initialTime,
+      currentGameName,
+      gameId,
+      timestamp: Date.now()
+    };
+    
+    try {
+      localStorage.setItem('boardgame_auto_save', JSON.stringify(gameState));
+    } catch (error) {
+      console.log('Auto-save failed:', error);
+    }
+  };
+
+  // Load saved state
+  const loadSavedState = () => {
+    try {
+      const saved = localStorage.getItem('boardgame_auto_save');
+      if (saved) {
+        const gameState = JSON.parse(saved);
+        // Only restore if saved within last 24 hours
+        if (Date.now() - gameState.timestamp < 24 * 60 * 60 * 1000) {
+          setPlayers(gameState.players || []);
+          setActivePlayerId(gameState.activePlayerId);
+          setIsRunning(false); // Don't auto-resume running timers
+          setGameStarted(gameState.gameStarted || false);
+          setTimerMode(gameState.timerMode || 'countup');
+          setInitialTime(gameState.initialTime || 600);
+          setCurrentGameName(gameState.currentGameName || '');
+          setGameId(gameState.gameId || '');
+        }
+      }
+    } catch (error) {
+      console.log('Failed to load saved state:', error);
+    }
+  };
+
+  // Load game history
+  const loadGameHistory = () => {
+    try {
+      const saved = localStorage.getItem('boardgame_history');
+      if (saved) {
+        setGameHistory(JSON.parse(saved));
+      }
+    } catch (error) {
+      console.log('Failed to load game history:', error);
+    }
+  };
+
+  // Save game history
+  const saveGameHistory = (newHistory) => {
+    try {
+      localStorage.setItem('boardgame_history', JSON.stringify(newHistory));
+    } catch (error) {
+      console.log('Failed to save game history:', error);
+    }
   };
 
   const saveGame = () => {
@@ -889,8 +1253,95 @@ const BoardGameTimer = () => {
       totalTime: players.reduce((sum, p) => sum + p.time, 0)
     };
     
-    setGameHistory(prev => [gameData, ...prev]);
+    const newHistory = [gameData, ...gameHistory];
+    setGameHistory(newHistory);
+    saveGameHistory(newHistory);
     Alert.alert('Success', 'Game saved successfully!');
+  };
+
+  // Delete game from history
+  const deleteGame = (gameId) => {
+    Alert.alert(
+      'Delete Game',
+      'Are you sure you want to delete this game?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            const newHistory = gameHistory.filter(game => game.id !== gameId);
+            setGameHistory(newHistory);
+            saveGameHistory(newHistory);
+          }
+        }
+      ]
+    );
+  };
+
+  // Load saved game and continue playing
+  const loadSavedGame = (game) => {
+    Alert.alert(
+      'Continue Game',
+      `Continue playing "${game.name}"?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Continue',
+          onPress: () => {
+            // Reset current game state
+            setGameId('');
+            setIsHost(false);
+            setIsHostUser(true);
+            setAllowGuestControl(false);
+            
+            // Load saved game data
+            const loadedPlayers = game.players.map((p, index) => ({
+              id: index + 1,
+              name: p.name,
+              time: p.time,
+              isActive: false,
+              color: p.color,
+              turns: 0,
+              totalTurnTime: 0,
+              turnStartTime: null
+            }));
+            
+            setPlayers(loadedPlayers);
+            setCurrentGameName(game.name);
+            setTimerMode(game.timerMode || 'countup');
+            setActivePlayerId(null);
+            setIsRunning(false);
+            setGameStarted(true); // Mark as started so controls are available
+            setCurrentScreen('game');
+            
+            Alert.alert('Game Loaded', `Continuing "${game.name}". You can now resume playing!`);
+          }
+        }
+      ]
+    );
+  };
+
+  // Undo last action
+  const undoLastAction = () => {
+    if (lastActionState) {
+      setPlayers(lastActionState.players);
+      setActivePlayerId(lastActionState.activePlayerId);
+      setIsRunning(lastActionState.isRunning);
+      setGameStarted(lastActionState.gameStarted);
+      setLastActionState(null);
+      Alert.alert('Undone', 'Last action has been undone');
+    }
+  };
+
+  // Save state for undo
+  const saveStateForUndo = () => {
+    setLastActionState({
+      players: [...players],
+      activePlayerId,
+      isRunning,
+      gameStarted
+    });
   };
 
   const getNextPlayerColor = () => {
@@ -981,6 +1432,104 @@ const BoardGameTimer = () => {
               </View>
             )}
             
+            <View style={styles.settingSection}>
+              <Text style={styles.settingLabel}>Turn Sounds</Text>
+              <View style={styles.settingOptions}>
+                <TouchableOpacity
+                  style={[
+                    styles.settingOption,
+                    playTurnSounds && styles.settingOptionActive
+                  ]}
+                  onPress={() => setPlayTurnSounds(!playTurnSounds)}
+                >
+                  <Text style={[
+                    styles.settingOptionText,
+                    playTurnSounds && styles.settingOptionTextActive
+                  ]}>🔊 Enabled</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.settingOption,
+                    !playTurnSounds && styles.settingOptionActive
+                  ]}
+                  onPress={() => setPlayTurnSounds(!playTurnSounds)}
+                >
+                  <Text style={[
+                    styles.settingOptionText,
+                    !playTurnSounds && styles.settingOptionTextActive
+                  ]}>🔇 Disabled</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+            
+            <View style={styles.settingSection}>
+              <Text style={styles.settingLabel}>Theme</Text>
+              <View style={styles.settingOptions}>
+                <TouchableOpacity
+                  style={[
+                    styles.settingOption,
+                    theme === 'dark' && styles.settingOptionActive
+                  ]}
+                  onPress={() => {
+                    setTheme('dark');
+                    try { localStorage.setItem('boardgame_theme', 'dark'); } catch (e) {}
+                  }}
+                >
+                  <Text style={[
+                    styles.settingOptionText,
+                    theme === 'dark' && styles.settingOptionTextActive
+                  ]}>🌙 Dark</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.settingOption,
+                    theme === 'light' && styles.settingOptionActive
+                  ]}
+                  onPress={() => {
+                    setTheme('light');
+                    try { localStorage.setItem('boardgame_theme', 'light'); } catch (e) {}
+                  }}
+                >
+                  <Text style={[
+                    styles.settingOptionText,
+                    theme === 'light' && styles.settingOptionTextActive
+                  ]}>☀️ Light</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+            
+            {isHostUser && gameId && (
+              <View style={styles.settingSection}>
+                <Text style={styles.settingLabel}>Multiplayer Controls</Text>
+                <View style={styles.settingOptions}>
+                  <TouchableOpacity
+                    style={[
+                      styles.settingOption,
+                      allowGuestControl && styles.settingOptionActive
+                    ]}
+                    onPress={() => setAllowGuestControl(!allowGuestControl)}
+                  >
+                    <Text style={[
+                      styles.settingOptionText,
+                      allowGuestControl && styles.settingOptionTextActive
+                    ]}>👥 Allow Guest Control</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.settingOption,
+                      !allowGuestControl && styles.settingOptionActive
+                    ]}
+                    onPress={() => setAllowGuestControl(!allowGuestControl)}
+                  >
+                    <Text style={[
+                      styles.settingOptionText,
+                      !allowGuestControl && styles.settingOptionTextActive
+                    ]}>🔒 Host Only</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+            
             <TouchableOpacity
               style={styles.modalCloseButton}
               onPress={() => setShowSettings(false)}
@@ -998,6 +1547,7 @@ const BoardGameTimer = () => {
           createNewGame={createNewGame}
           setCurrentScreen={setCurrentScreen}
           setShowSettings={setShowSettings}
+          deleteGame={deleteGame}
         />
       )}
       {currentScreen === 'game' && (
@@ -1031,6 +1581,8 @@ const BoardGameTimer = () => {
           formatTime={formatTime}
           getAverageTurnTime={getAverageTurnTime}
           startPlayerTurn={startPlayerTurn}
+          lastActionState={lastActionState}
+          undoLastAction={undoLastAction}
         />
       )}
       {currentScreen === 'history' && (
@@ -1038,6 +1590,8 @@ const BoardGameTimer = () => {
           gameHistory={gameHistory}
           setCurrentScreen={setCurrentScreen}
           formatTime={formatTime}
+          deleteGame={deleteGame}
+          loadSavedGame={loadSavedGame}
         />
       )}
       {currentScreen === 'join' && (
@@ -1056,11 +1610,18 @@ const styles = StyleSheet.create({
   app: {
     flex: 1,
     backgroundColor: '#1a1a2e',
+    width: '100%',
+    height: '100%',
   },
   container: {
     flex: 1,
-    padding: 16,
     backgroundColor: '#1a1a2e',
+    width: '100%',
+  },
+  scrollContent: {
+    padding: 16,
+    paddingBottom: 100, // Extra space at bottom for mobile
+    minHeight: '100%',
   },
   lightContainer: {
     backgroundColor: '#f8f9fa',
@@ -1154,7 +1715,18 @@ const styles = StyleSheet.create({
   gameHistoryItem: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
     paddingVertical: 8,
+  },
+  gameHistoryText: {
+    flex: 1,
+  },
+  deleteGameButton: {
+    padding: 4,
+    marginLeft: 8,
+  },
+  deleteGameText: {
+    fontSize: 16,
   },
   gameName: {
     color: '#ffffff',
@@ -1313,6 +1885,12 @@ const styles = StyleSheet.create({
   resetButton: {
     backgroundColor: '#ef4444',
   },
+  undoButton: {
+    backgroundColor: '#f59e0b',
+  },
+  themeButton: {
+    backgroundColor: '#8b5cf6',
+  },
   controlButtonText: {
     color: '#ffffff',
     fontSize: 12,
@@ -1324,11 +1902,11 @@ const styles = StyleSheet.create({
   },
   playerCard: {
     backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    padding: 16,
+    padding: 12,
     borderRadius: 12,
     borderWidth: 2,
     borderColor: 'rgba(255, 255, 255, 0.1)',
-    minHeight: 160,
+    minHeight: 140,
   },
   activePlayerCard: {
     borderColor: '#fbbf24',
@@ -1420,7 +1998,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   timeDisplay: {
-    fontSize: 32,
+    fontSize: 28,
     fontWeight: 'bold',
     color: '#ffffff',
     fontFamily: 'monospace',
@@ -1438,19 +2016,43 @@ const styles = StyleSheet.create({
   },
   playerButton: {
     backgroundColor: '#3b82f6',
-    padding: 12,
+    padding: 8,
     borderRadius: 8,
     alignItems: 'center',
-    minHeight: 44,
+    minHeight: 36,
     justifyContent: 'center',
+  },
+  playerButtonCompact: {
+    padding: 6,
+    minHeight: 32,
+  },
+  playerButtonContent: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  playerButtonTime: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '500',
+    marginTop: 2,
+    opacity: 0.9,
+  },
+  playerButtonTimeCompact: {
+    fontSize: 10,
+    marginTop: 1,
   },
   playerButtonText: {
     color: '#ffffff',
     fontWeight: '600',
     textAlign: 'center',
+    fontSize: 12,
+  },
+  playerButtonTextCompact: {
+    fontSize: 10,
   },
   statsContainer: {
     marginTop: 20,
+    marginBottom: 20,
     padding: 16,
     backgroundColor: 'rgba(255, 255, 255, 0.05)',
     borderRadius: 12,
@@ -1513,7 +2115,14 @@ const styles = StyleSheet.create({
   historyHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 8,
+  },
+  historyHeaderText: {
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
   historyGameName: {
     fontSize: 16,
@@ -1541,6 +2150,23 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.2)',
     padding: 6,
     borderRadius: 4,
+  },
+  historyActions: {
+    marginTop: 12,
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+  },
+  continueGameButton: {
+    backgroundColor: '#3b82f6',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+    alignItems: 'center',
+  },
+  continueGameText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '600',
   },
   modalOverlay: {
     position: 'absolute',
