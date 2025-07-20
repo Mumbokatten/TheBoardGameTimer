@@ -101,7 +101,9 @@ const HomeScreen = ({
   createNewGame, 
   setCurrentScreen, 
   setShowSettings,
-  deleteGame
+  deleteGame,
+  hasActiveGame,
+  returnToGame
 }) => (
   <ScrollView contentContainerStyle={[styles.container, theme === 'light' && styles.lightContainer]}>
     <View style={styles.header}>
@@ -115,10 +117,12 @@ const HomeScreen = ({
     <View style={styles.buttonContainer}>
       <TouchableOpacity 
         style={[styles.button, styles.primaryButton, styles.buttonWithFeedback]} 
-        onPress={createNewGame}
+        onPress={hasActiveGame ? returnToGame : createNewGame}
         activeOpacity={0.7}
       >
-        <Text style={styles.buttonText}>🎮 Create New Game</Text>
+        <Text style={styles.buttonText}>
+          {hasActiveGame ? '🔄 Return to Game' : '🎮 Create New Game'}
+        </Text>
       </TouchableOpacity>
       
       <TouchableOpacity 
@@ -769,10 +773,17 @@ const BoardGameTimer = () => {
     const newGameId = generateGameId();
     setGameId(newGameId);
     setIsHost(true);
+    setIsHostUser(true);
+    setAllowGuestControl(false);
+    setAllowGuestNames(false);
     setCurrentScreen('game');
     
-    // Force fresh start - always 0 for new games
-    performReset(true); // Force zero for new games
+    // Reset all state for fresh game
+    setIsRunning(false);
+    setActivePlayerId(null);
+    setLastActivePlayerId(null);
+    setGameStarted(false);
+    setCurrentGameName('');
     setPlayers([
       { id: 1, name: 'Player 1', time: 0, isActive: false, color: PLAYER_COLORS[0].value, turns: 0, totalTurnTime: 0, turnStartTime: null },
       { id: 2, name: 'Player 2', time: 0, isActive: false, color: PLAYER_COLORS[1].value, turns: 0, totalTurnTime: 0, turnStartTime: null }
@@ -1014,6 +1025,31 @@ const BoardGameTimer = () => {
     
     const unsubscribe = firebase.onValue(gameRef, (snapshot) => {
       const data = snapshot.val();
+      
+      // If game data doesn't exist, it means host finished the game and removed it
+      if (!data && !isHostUser) {
+        Alert.alert(
+          'Game Ended',
+          'The host has finished the game. You have been disconnected.',
+          [
+            {
+              text: 'OK',
+              onPress: () => {
+                // Reset everything and return to home
+                performReset();
+                setCurrentScreen('home');
+                setGameId('');
+                setIsHost(false);
+                setIsHostUser(false);
+                setConnectionStatus('disconnected');
+                setIsOnline(false);
+              }
+            }
+          ]
+        );
+        return;
+      }
+      
       if (data && data.lastUpdated) {
         // Update if this change came from another player
         if (data.hostId !== playerId.current) {
@@ -1106,9 +1142,9 @@ const BoardGameTimer = () => {
       return { ...player, isActive: false };
     }));
     
-    // Set new active player and resume timer
+    // Set new active player and start timer automatically
     setActivePlayerId(newPlayerId);
-    setIsRunning(wasRunning); // Resume if it was running
+    setIsRunning(true); // Always start timer when switching to a player
     setGameStarted(true);
     
     // Play turn sound if enabled
@@ -1296,20 +1332,40 @@ const BoardGameTimer = () => {
     Alert.alert('Game Reset', 'The game has been reset successfully.');
   };
 
-  const finishGame = () => {
+  const finishGame = async () => {
     if (!gameStarted) return;
     
     showAlert(
       'Finish Game',
-      'Save this game and start fresh?',
+      'Save this game and start fresh? This will end the game for all players.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Finish & Save',
-          onPress: () => {
+          onPress: async () => {
             saveGame();
+            
+            // If host, remove the game from Firebase to kick out other players
+            if (isHostUser && firebase && firebase.database && gameId) {
+              try {
+                const gameRef = firebase.ref(firebase.database, `games/${gameId}`);
+                await firebase.remove(gameRef);
+                console.log('Game removed from Firebase, all players kicked out');
+              } catch (error) {
+                console.log('Error removing game from Firebase:', error);
+              }
+            }
+            
+            // Reset everything and return to home
             performReset();
-            Alert.alert('Game Finished', 'Game saved successfully and reset for a new game!');
+            setCurrentScreen('home');
+            setGameId('');
+            setIsHost(false);
+            setIsHostUser(false);
+            setConnectionStatus('disconnected');
+            setIsOnline(false);
+            
+            Alert.alert('Game Finished', 'Game saved successfully and all players have been disconnected!');
           }
         }
       ]
@@ -1503,7 +1559,8 @@ const BoardGameTimer = () => {
 
   const getAverageTurnTime = (player) => {
     if (player.turns === 0) return 0;
-    return Math.round(player.totalTurnTime / player.turns / 1000); // in seconds
+    // Use actual displayed time divided by turns for more accurate average
+    return Math.round(player.time / player.turns); // in seconds
   };
 
   const getPlayerBoxSize = () => {
@@ -1729,6 +1786,8 @@ const BoardGameTimer = () => {
           setCurrentScreen={setCurrentScreen}
           setShowSettings={setShowSettings}
           deleteGame={deleteGame}
+          hasActiveGame={gameStarted || gameId}
+          returnToGame={() => setCurrentScreen('game')}
         />
       )}
       {currentScreen === 'game' && (
