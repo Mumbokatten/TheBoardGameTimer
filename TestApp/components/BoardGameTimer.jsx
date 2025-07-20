@@ -445,6 +445,11 @@ const GameScreen = ({
               autoComplete="off"
               selectTextOnFocus={true}
               editable={true}
+              maxLength={30}
+              multiline={true}
+              numberOfLines={2}
+              placeholder="Enter player name"
+              placeholderTextColor="rgba(255, 255, 255, 0.5)"
             />
             
             {showColorPicker === player.id && (
@@ -2085,8 +2090,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.3)',
     minHeight: 36,
+    maxHeight: 72, // Allow for 2 lines of text
     marginBottom: 12, // Space below name input
     textAlign: 'center', // Center the player name
+    textAlignVertical: 'center', // Center vertically
+    lineHeight: 20, // Better line spacing
     outlineStyle: 'none',
     cursor: 'text',
     pointerEvents: 'auto',
