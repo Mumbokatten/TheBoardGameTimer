@@ -742,7 +742,7 @@ const BoardGameTimer = () => {
     setGameId(newGameId);
     setIsHost(true);
     setCurrentScreen('game');
-    resetGame();
+    performReset(); // Use direct reset without confirmation for new games
     
     if (firebase) {
       setConnectionStatus('connecting');
