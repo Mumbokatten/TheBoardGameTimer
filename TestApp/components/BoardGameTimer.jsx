@@ -1415,7 +1415,7 @@ const BoardGameTimer = () => {
         syncGameStateToFirebase();
         console.log('Name change synced for player:', id, name);
         delete window.nameTimeouts[id];
-      }, 500); // 500ms debounce
+      }, 300); // 300ms debounce - faster for production
     }
   }, [isHostUser, allowGuestNames, firebase, gameId, syncGameStateToFirebase]);
 
@@ -1453,7 +1453,7 @@ const BoardGameTimer = () => {
         syncGameStateToFirebase();
         console.log('Color change synced for player:', playerId, color);
         window.colorTimeout = null;
-      }, 100); // Quick sync for colors
+      }, 50); // Very quick sync for colors
     }
   }, [isHostUser, allowGuestNames, firebase, gameId, syncGameStateToFirebase]);
 
@@ -1536,8 +1536,8 @@ const BoardGameTimer = () => {
     const now = Date.now();
     lastLocalActionRef.current = now;
     // Longer ignore window to ensure our changes sync before accepting remote updates
-    ignoreUpdatesUntilRef.current = now + 1500; // Increased to 1.5s for much stronger protection
-    console.log('markLocalAction called, ignoring updates for 1500ms');
+    ignoreUpdatesUntilRef.current = now + 3000; // 3 seconds for production network latency
+    console.log('markLocalAction called, ignoring updates for 3000ms');
   };
 
 
@@ -1654,16 +1654,13 @@ const BoardGameTimer = () => {
                 } : incomingPlayer;
               }
               
-              // For other players, preserve local name and color changes if recent
+              // Always accept incoming changes for other players to avoid conflicts
               if (localPlayer) {
                 return {
                   ...incomingPlayer,
-                  // Keep local name if we have a more recent local change
-                  name: (now - lastLocalActionRef.current < 1000 && localPlayer.name !== incomingPlayer.name) 
-                    ? localPlayer.name : incomingPlayer.name,
-                  // Keep local color if we have a more recent local change  
-                  color: (now - lastLocalActionRef.current < 1000 && localPlayer.color !== incomingPlayer.color)
-                    ? localPlayer.color : incomingPlayer.color
+                  // Accept all incoming changes to prevent sync loops
+                  name: incomingPlayer.name,
+                  color: incomingPlayer.color
                 };
               }
               
