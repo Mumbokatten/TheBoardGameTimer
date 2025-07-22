@@ -1394,11 +1394,23 @@ const BoardGameTimer = () => {
     // Mark this as a local action BEFORE Firebase sync for stronger protection
     markLocalAction();
     
-    // Simple delayed sync to prevent flooding Firebase
+    // Direct Firebase sync like settings - bypass full game state sync
     if (firebase && gameId) {
-      setTimeout(() => {
-        syncGameStateToFirebase();
-        console.log('Name change synced for player:', id, name);
+      setTimeout(async () => {
+        try {
+          const playerRef = firebase.ref(firebase.database, `games/${gameId}/players`);
+          const playersSnapshot = await firebase.get(playerRef);
+          if (playersSnapshot.exists()) {
+            const currentPlayers = playersSnapshot.val();
+            const updatedPlayers = currentPlayers.map(p => 
+              p.id === id ? { ...p, name } : p
+            );
+            await firebase.set(playerRef, updatedPlayers);
+            console.log('Name change synced directly for player:', id, name);
+          }
+        } catch (error) {
+          console.log('Failed to sync name directly:', error);
+        }
       }, 100);
     }
   }, [isHostUser, allowGuestNames, firebase, gameId, syncGameStateToFirebase]);
@@ -1424,12 +1436,23 @@ const BoardGameTimer = () => {
     // Mark this as a local action BEFORE Firebase sync for stronger protection
     markLocalAction();
     
-    // Simple delayed sync to prevent flooding Firebase
+    // Direct Firebase sync like settings - bypass full game state sync
     if (firebase && gameId) {
-      setTimeout(() => {
-        console.log('Syncing color change to Firebase...');
-        syncGameStateToFirebase();
-        console.log('Color change synced for player:', playerId, color);
+      setTimeout(async () => {
+        try {
+          const playerRef = firebase.ref(firebase.database, `games/${gameId}/players`);
+          const playersSnapshot = await firebase.get(playerRef);
+          if (playersSnapshot.exists()) {
+            const currentPlayers = playersSnapshot.val();
+            const updatedPlayers = currentPlayers.map(p => 
+              p.id === playerId ? { ...p, color } : p
+            );
+            await firebase.set(playerRef, updatedPlayers);
+            console.log('Color change synced directly for player:', playerId, color);
+          }
+        } catch (error) {
+          console.log('Failed to sync color directly:', error);
+        }
       }, 100);
     }
   }, [isHostUser, allowGuestNames, firebase, gameId, syncGameStateToFirebase]);
@@ -1861,11 +1884,22 @@ const BoardGameTimer = () => {
     setActivePlayerId(null);
     setAuthoritativeTimerPlayerId(null); // Clear authoritative timer owner
     
-    // Immediately sync pause state to Firebase for multiplayer
+    // Direct Firebase sync for pause state like settings
     if (firebase && gameId) {
-      setTimeout(() => {
-        syncGameStateToFirebase();
-      }, 100); // Quick sync for pause state
+      setTimeout(async () => {
+        try {
+          const gameRef = firebase.ref(firebase.database, `games/${gameId}`);
+          await firebase.update(gameRef, {
+            isRunning: false,
+            activePlayerId: null,
+            lastUpdated: Date.now(),
+            lastActionPlayerId: playerId.current
+          });
+          console.log('Pause state synced directly');
+        } catch (error) {
+          console.log('Failed to sync pause directly:', error);
+        }
+      }, 50);
     }
   };
   
