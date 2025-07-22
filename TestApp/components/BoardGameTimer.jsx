@@ -591,15 +591,9 @@ const GameScreen = ({
                       setEditingPlayerId(null);
                       const finalName = e.target.value || player.name;
                       
-                      // Clear debounce timeout and force immediate sync
-                      if (window.nameTimeouts && window.nameTimeouts[player.id]) {
-                        clearTimeout(window.nameTimeouts[player.id]);
-                        delete window.nameTimeouts[player.id];
-                        
-                        // Use the handlePlayerNameChange function that's in scope
-                        handlePlayerNameChange(player.id)(finalName);
-                        console.log('Final name synced on blur for player:', player.id, finalName);
-                      }
+                      // Force final sync on blur using the same immediate pattern as game name
+                      handlePlayerNameChange(player.id)(finalName);
+                      console.log('Final name synced on blur for player:', player.id, finalName);
                     }}
                     autoComplete="off"
                     selectTextOnFocus={true}
@@ -1400,22 +1394,10 @@ const BoardGameTimer = () => {
     // Mark this as a local action BEFORE Firebase sync for stronger protection
     markLocalAction();
     
-    // Debounced sync for name changes - only sync after user stops typing
+    // IMMEDIATE sync like game name - no debouncing!
     if (firebase && gameId) {
-      // Clear any existing timeout for this player
-      if (window.nameTimeouts && window.nameTimeouts[id]) {
-        clearTimeout(window.nameTimeouts[id]);
-      }
-      
-      // Initialize timeouts object if it doesn't exist
-      if (!window.nameTimeouts) window.nameTimeouts = {};
-      
-      // Set new timeout - sync after 500ms of no typing
-      window.nameTimeouts[id] = setTimeout(() => {
-        syncGameStateToFirebase();
-        console.log('Name change synced for player:', id, name);
-        delete window.nameTimeouts[id];
-      }, 300); // 300ms debounce - faster for production
+      syncGameStateToFirebase();
+      console.log('Name change synced immediately for player:', id, name);
     }
   }, [isHostUser, allowGuestNames, firebase, gameId, syncGameStateToFirebase]);
 
@@ -1440,20 +1422,11 @@ const BoardGameTimer = () => {
     // Mark this as a local action BEFORE Firebase sync for stronger protection
     markLocalAction();
     
-    // Immediate sync for color changes with stronger protection
+    // IMMEDIATE sync like game name - no timeouts!
     if (firebase && gameId) {
-      // Clear any existing timeout for color changes
-      if (window.colorTimeout) {
-        clearTimeout(window.colorTimeout);
-      }
-      
-      // Sync immediately for colors but with very strong protection
-      window.colorTimeout = setTimeout(() => {
-        console.log('Syncing color change to Firebase...');
-        syncGameStateToFirebase();
-        console.log('Color change synced for player:', playerId, color);
-        window.colorTimeout = null;
-      }, 50); // Very quick sync for colors
+      console.log('Syncing color change to Firebase...');
+      syncGameStateToFirebase();
+      console.log('Color change synced immediately for player:', playerId, color);
     }
   }, [isHostUser, allowGuestNames, firebase, gameId, syncGameStateToFirebase]);
 
