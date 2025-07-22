@@ -1394,10 +1394,12 @@ const BoardGameTimer = () => {
     // Mark this as a local action BEFORE Firebase sync for stronger protection
     markLocalAction();
     
-    // IMMEDIATE sync like game name - no debouncing!
+    // Simple delayed sync to prevent flooding Firebase
     if (firebase && gameId) {
-      syncGameStateToFirebase();
-      console.log('Name change synced immediately for player:', id, name);
+      setTimeout(() => {
+        syncGameStateToFirebase();
+        console.log('Name change synced for player:', id, name);
+      }, 100);
     }
   }, [isHostUser, allowGuestNames, firebase, gameId, syncGameStateToFirebase]);
 
@@ -1422,11 +1424,13 @@ const BoardGameTimer = () => {
     // Mark this as a local action BEFORE Firebase sync for stronger protection
     markLocalAction();
     
-    // IMMEDIATE sync like game name - no timeouts!
+    // Simple delayed sync to prevent flooding Firebase
     if (firebase && gameId) {
-      console.log('Syncing color change to Firebase...');
-      syncGameStateToFirebase();
-      console.log('Color change synced immediately for player:', playerId, color);
+      setTimeout(() => {
+        console.log('Syncing color change to Firebase...');
+        syncGameStateToFirebase();
+        console.log('Color change synced for player:', playerId, color);
+      }, 100);
     }
   }, [isHostUser, allowGuestNames, firebase, gameId, syncGameStateToFirebase]);
 
@@ -1509,8 +1513,8 @@ const BoardGameTimer = () => {
     const now = Date.now();
     lastLocalActionRef.current = now;
     // Longer ignore window to ensure our changes sync before accepting remote updates
-    ignoreUpdatesUntilRef.current = now + 800; // 800ms focused protection
-    console.log('markLocalAction called, ignoring updates for 800ms');
+    ignoreUpdatesUntilRef.current = now + 300; // 300ms focused protection  
+    console.log('markLocalAction called, ignoring updates for 300ms');
   };
 
 
