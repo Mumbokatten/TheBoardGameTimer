@@ -1536,8 +1536,8 @@ const BoardGameTimer = () => {
     const now = Date.now();
     lastLocalActionRef.current = now;
     // Longer ignore window to ensure our changes sync before accepting remote updates
-    ignoreUpdatesUntilRef.current = now + 3000; // 3 seconds for production network latency
-    console.log('markLocalAction called, ignoring updates for 3000ms');
+    ignoreUpdatesUntilRef.current = now + 800; // 800ms focused protection
+    console.log('markLocalAction called, ignoring updates for 800ms');
   };
 
 
@@ -1582,13 +1582,14 @@ const BoardGameTimer = () => {
       if (data && data.lastUpdated) {
         const now = Date.now();
         
-        // Ignore updates if we just made a local action (optimistic updates)
-        // BUT allow initial loading when joining a game
+        // Smart conflict protection - only ignore updates that would conflict with our specific changes
         const localPlayersAreDefault = players.length <= 2 && players.every(p => p.name.startsWith('Player '));
         const isInitialLoad = localPlayersAreDefault || players.length === 0;
+        const hasRecentLocalAction = now < ignoreUpdatesUntilRef.current;
         
-        if (!isInitialLoad && now < ignoreUpdatesUntilRef.current) {
-          console.log('Ignoring Firebase update due to recent local action, remaining:', ignoreUpdatesUntilRef.current - now + 'ms');
+        // Only ignore updates from the same player who made the local action, not all updates
+        if (!isInitialLoad && hasRecentLocalAction && data.lastActionPlayerId === playerId.current) {
+          console.log('Ignoring Firebase update from same player due to recent local action, remaining:', ignoreUpdatesUntilRef.current - now + 'ms');
           setConnectionStatus('connected');
           setIsOnline(true);
           return;
