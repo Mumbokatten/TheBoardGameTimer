@@ -1386,13 +1386,15 @@ const BoardGameTimer = () => {
       return;
     }
     
+    console.log('Guest permissions check:', { isHostUser, allowGuestNames, canEdit: isHostUser || allowGuestNames });
+    
     // Update player name immediately (optimistic update)
     setPlayers(prev => prev.map(player => 
       player.id === id ? { ...player, name } : player
     ));
     
     // Mark this as a local action BEFORE Firebase sync for stronger protection
-    markLocalAction();
+    markLocalAction(true); // true = direct sync, longer protection
     
     // Direct Firebase sync like settings - bypass full game state sync
     if (firebase && gameId) {
@@ -1434,7 +1436,7 @@ const BoardGameTimer = () => {
     });
     
     // Mark this as a local action BEFORE Firebase sync for stronger protection
-    markLocalAction();
+    markLocalAction(true); // true = direct sync, longer protection
     
     // Direct Firebase sync like settings - bypass full game state sync
     if (firebase && gameId) {
@@ -1532,12 +1534,13 @@ const BoardGameTimer = () => {
   );
 
   // Helper function to mark local actions for optimistic updates
-  const markLocalAction = () => {
+  const markLocalAction = (isDirectSync = false) => {
     const now = Date.now();
     lastLocalActionRef.current = now;
-    // Longer ignore window to ensure our changes sync before accepting remote updates
-    ignoreUpdatesUntilRef.current = now + 300; // 300ms focused protection  
-    console.log('markLocalAction called, ignoring updates for 300ms');
+    // Much longer protection for direct Firebase updates since they need time to propagate
+    const protectionTime = isDirectSync ? 1000 : 300; // 1s for direct, 300ms for regular
+    ignoreUpdatesUntilRef.current = now + protectionTime;
+    console.log('markLocalAction called, ignoring updates for', protectionTime + 'ms', isDirectSync ? '(direct sync)' : '(regular)');
   };
 
 
