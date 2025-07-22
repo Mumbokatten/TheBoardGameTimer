@@ -107,8 +107,8 @@ const getOptimalLayout = (playerCount, screenWidth = 1200, screenHeight = 800) =
   if (playerCount === 2) return { cols: 2, rows: 1, size: 'large', cardHeight: Math.max(ninePlayerHeight, getCardHeight(1)) };
   if (playerCount === 3) return { cols: 3, rows: 1, size: 'medium', cardHeight: Math.max(ninePlayerHeight, getCardHeight(1)) };
   if (playerCount === 4) return { cols: 2, rows: 2, size: 'medium', cardHeight: Math.max(ninePlayerHeight, getCardHeight(2)) };
-  if (playerCount === 5) return { cols: 3, rows: 2, size: 'medium', cardHeight: Math.max(ninePlayerHeight, getCardHeight(2)) };
-  if (playerCount === 6) return { cols: 3, rows: 2, size: 'medium', cardHeight: Math.max(ninePlayerHeight, getCardHeight(2)) };
+  if (playerCount === 5) return { cols: 2, rows: 3, size: 'medium', cardHeight: Math.max(ninePlayerHeight, getCardHeight(3)) };
+  if (playerCount === 6) return { cols: 2, rows: 3, size: 'medium', cardHeight: Math.max(ninePlayerHeight, getCardHeight(3)) };
   if (playerCount === 7) return { cols: 3, rows: 3, size: 'compact', cardHeight: ninePlayerHeight };
   if (playerCount === 8) return { cols: 3, rows: 3, size: 'compact', cardHeight: ninePlayerHeight };
   if (playerCount === 9) return { cols: 3, rows: 3, size: 'compact', cardHeight: ninePlayerHeight };
@@ -540,80 +540,39 @@ const GameScreen = ({
                           getPlayerGridCols() === 4 ? '24%' : 
                           getPlayerGridCols() === 5 ? '19%' : '16%',
                 flexShrink: 0,
-                flexGrow: 0
+                flexGrow: 0,
+                overflow: 'hidden'
               }
             ]}
           >
-            {/* Row 1: Name + Color + Delete */}
+            {/* Row 1: Color + Delete Controls */}
             <View style={[
-              styles.playerTopRow,
-              (typeof window !== 'undefined' && window.innerWidth < 768) && styles.playerTopRowCompact
+              styles.playerControlsRow,
+              (typeof window !== 'undefined' && window.innerWidth < 768) && styles.playerControlsRowMobile
             ]}>
               {(typeof window !== 'undefined' && window.innerWidth < 768) ? (
-                // Mobile compact layout
-                <>
-                  {editingPlayerId === player.id ? (
-                    <TextInput
-                      key={`mobile-player-name-${player.id}`}
-                      style={[styles.playerNameText, styles.playerNameTextMobile, styles.playerNameInputMobile]}
-                      value={player.name || ''}
-                      onChangeText={(text) => {
-                        console.log('Name changing:', player.id, text);
-                        handlePlayerNameChange(player.id)(text);
-                      }}
-                      onBlur={() => {
-                        console.log('Name input blur');
-                        setTimeout(() => setEditingPlayerId(null), 150);
-                      }}
-                      onSubmitEditing={() => {
-                        console.log('Name submit');
-                        setEditingPlayerId(null);
-                      }}
-                      autoFocus={true}
-                      selectTextOnFocus={true}
-                      placeholder={`Player ${player.id}`}
-                      placeholderTextColor="#888"
-                      returnKeyType="done"
-                      blurOnSubmit={true}
-                    />
-                  ) : (
+                // Mobile compact layout - centered controls
+                <View style={styles.playerControlsCompact}>
+                  <TouchableOpacity 
+                    style={[styles.colorButtonCompact, { backgroundColor: player.color }]}
+                    onPress={() => setShowColorPicker(showColorPicker === player.id ? null : player.id)}
+                  >
+                    <Text style={styles.colorButtonTextCompact}>🎨</Text>
+                  </TouchableOpacity>
+                  {players.length > 2 && (
                     <TouchableOpacity 
                       onPress={() => {
-                        console.log('Starting edit for player:', player.id);
-                        setEditingPlayerId(player.id);
-                      }} 
-                      style={{ flex: 1 }}
-                      activeOpacity={0.7}
+                        console.log('Delete button pressed for player:', player.id);
+                        removePlayer(player.id);
+                      }}
+                      style={styles.removeButtonTouchArea}
                     >
-                      <Text 
-                        style={[styles.playerNameText, styles.playerNameTextMobile]}
-                      >
-                        {player.name || `Player ${player.id}`}
-                      </Text>
+                      <Text style={styles.removeButtonCompact}>❌</Text>
                     </TouchableOpacity>
                   )}
-                  <View style={styles.playerControlsCompact}>
-                    <TouchableOpacity 
-                      style={[styles.colorButtonCompact, { backgroundColor: player.color }]}
-                      onPress={() => setShowColorPicker(showColorPicker === player.id ? null : player.id)}
-                    >
-                      <Text style={styles.colorButtonTextCompact}>🎨</Text>
-                    </TouchableOpacity>
-                    {players.length > 2 && (
-                      <TouchableOpacity 
-                        onPress={() => {
-                          console.log('Delete button pressed for player:', player.id);
-                          removePlayer(player.id);
-                        }}
-                        style={styles.removeButtonTouchArea}
-                      >
-                        <Text style={styles.removeButtonCompact}>❌</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                </>
+                </View>
               ) : (
-                // Desktop layout with input
+                // Desktop: Compact traditional layout - name input with controls on same row
                 <View style={styles.playerNameContainer}>
                   <TextInput
                     key={`player-name-${player.id}`}
@@ -696,83 +655,118 @@ const GameScreen = ({
               </View>
             )}
             
-            <View style={[
-              styles.timerSection,
-              (typeof window !== 'undefined' && window.innerWidth < 768) && styles.timerSectionCompact
-            ]}>
-              <Text style={[
-                styles.timeDisplay,
-                timerMode === 'countdown' && player.time <= 60 && styles.urgentTime,
-                (typeof window !== 'undefined' && window.innerWidth < 768) && styles.timeDisplayCompact,
-                getPlayerGridCols() > 4 && styles.timeDisplayTiny
-              ]}>
-                {formatTime(player.time)}
-              </Text>
-              {timerMode === 'countdown' && player.time <= 60 && player.time > 0 && (typeof window !== 'undefined' && window.innerWidth >= 768) && (
-                <Text style={[
-                  styles.urgentText,
-                  (typeof window !== 'undefined' && window.innerWidth < 768) && styles.urgentTextCompact
-                ]}>TIME RUNNING OUT!</Text>
-              )}
-            </View>
-            
-            {/* Row 3: Stats */}
-            <View style={[
-              styles.playerStats,
-              (typeof window !== 'undefined' && window.innerWidth < 768) && styles.playerStatsCompact
-            ]}>
-              <Text style={[
-                styles.statText,
-                (typeof window !== 'undefined' && window.innerWidth < 768) && styles.statTextMobile
-              ]}>
-                🎯 {(typeof window !== 'undefined' && window.innerWidth < 768) ? player.turns || 0 : `Turns: ${player.turns || 0}`}
-              </Text>
-              <Text style={[
-                styles.statText,
-                (typeof window !== 'undefined' && window.innerWidth < 768) && styles.statTextMobile
-              ]}>
-                ⏱️ {(typeof window !== 'undefined' && window.innerWidth < 768) ? formatTime(getAverageTurnTime(player)) : `Avg: ${formatTime(getAverageTurnTime(player))}`}
-              </Text>
-            </View>
-            
-            <View style={[
-              styles.playerButtonSection,
-              (typeof window !== 'undefined' && window.innerWidth < 768) && styles.playerButtonSectionCompact
-            ]}>
-              <TouchableOpacity
-                style={[
-                  styles.playerButton,
-                  { 
-                    backgroundColor: player.isActive && isRunning ? '#ef4444' : player.isActive && !isRunning ? '#f59e0b' : '#10b981',
-                    elevation: 4,
-                    shadowOffset: { width: 0, height: 3 },
-                    shadowOpacity: 0.3,
-                    shadowRadius: 4,
-                    borderWidth: 2,
-                    borderColor: 'rgba(255, 255, 255, 0.3)',
-                  },
-                  (typeof window !== 'undefined' && window.innerWidth < 768) && styles.playerButtonMobile
-                ]}
-                onPress={() => startPlayerTurn(player.id)}
-              >
-                <Text style={[
-                  styles.playerButtonText,
-                  (typeof window !== 'undefined' && window.innerWidth < 768) && styles.playerButtonTextMobile,
-                  { 
-                    color: '#ffffff', 
-                    fontWeight: 'bold',
-                    textShadow: '1px 1px 2px rgba(0,0,0,0.5)'
-                  }
-                ]}>
-                  {player.isActive && isRunning ? 
-                    '⏸️' : 
-                    player.isActive && !isRunning ? 
-                      '▶️' : 
-                      '▶️'
-                  }
-                </Text>
-              </TouchableOpacity>
-            </View>
+            {(typeof window !== 'undefined' && window.innerWidth < 768) ? (
+              // Mobile: 5-row layout
+              <>
+                {/* Row 2: Player Name */}
+                <View style={styles.playerNameRowMobile}>
+                  {editingPlayerId === player.id ? (
+                    <TextInput
+                      key={`mobile-player-name-${player.id}`}
+                      style={[styles.playerNameInputMobile, styles.playerNameInputMobileLarge]}
+                      value={player.name || ''}
+                      onChangeText={(text) => {
+                        console.log('Name changing:', player.id, text);
+                        handlePlayerNameChange(player.id)(text);
+                      }}
+                      onBlur={() => {
+                        console.log('Name input blur');
+                        setTimeout(() => setEditingPlayerId(null), 150);
+                      }}
+                      onSubmitEditing={() => {
+                        console.log('Name submit');
+                        setEditingPlayerId(null);
+                      }}
+                      autoFocus={true}
+                      selectTextOnFocus={true}
+                      placeholder={`Player ${player.id}`}
+                      placeholderTextColor="#888"
+                      returnKeyType="done"
+                      blurOnSubmit={true}
+                    />
+                  ) : (
+                    <TouchableOpacity 
+                      onPress={() => {
+                        console.log('Starting edit for player:', player.id);
+                        setEditingPlayerId(player.id);
+                      }} 
+                      style={styles.playerNameTouchArea}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.playerNameTextMobileLarge}>
+                        {player.name || `Player ${player.id}`}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+                
+                {/* Row 3: Timer */}
+                <View style={styles.timerSectionCompact}>
+                  <Text style={[styles.timeDisplay, styles.timeDisplayCompact]}>
+                    {formatTime(player.time)}
+                  </Text>
+                </View>
+                
+                {/* Row 4: Start Button */}
+                <View style={styles.playerButtonSectionMobile}>
+                  <TouchableOpacity
+                    style={[styles.playerButton, styles.playerButtonMobileSquare, {
+                      backgroundColor: player.isActive && isRunning ? '#ef4444' : player.isActive && !isRunning ? '#f59e0b' : '#10b981',
+                    }]}
+                    onPress={() => startPlayerTurn(player.id)}
+                  >
+                    <Text style={[styles.playerButtonText, styles.playerButtonTextMobileSquare, { color: '#ffffff', fontWeight: 'bold' }]}>
+                      {player.isActive && isRunning ? '⏸️' : player.isActive && !isRunning ? '▶️' : 'Play'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+                
+                {/* Row 5: Stats */}
+                <View style={styles.playerStatsBottom}>
+                  <Text style={styles.statTextMobile}>🎯 {player.turns || 0}</Text>
+                  <Text style={styles.statTextMobile}>⏱️ {formatTime(getAverageTurnTime(player))}</Text>
+                </View>
+              </>
+            ) : (
+              // Desktop: Compact integrated layout
+              <>
+                <View style={styles.timerSection}>
+                  <Text style={[
+                    styles.timeDisplay,
+                    timerMode === 'countdown' && player.time <= 60 && styles.urgentTime,
+                  ]}>
+                    {formatTime(player.time)}
+                  </Text>
+                  {timerMode === 'countdown' && player.time <= 60 && player.time > 0 && (
+                    <Text style={styles.urgentText}>TIME RUNNING OUT!</Text>
+                  )}
+                </View>
+                
+                <View style={styles.playerButtonSection}>
+                  <TouchableOpacity
+                    style={[styles.playerButton, {
+                      backgroundColor: player.isActive && isRunning ? '#ef4444' : player.isActive && !isRunning ? '#f59e0b' : '#10b981',
+                      elevation: 4,
+                      shadowOffset: { width: 0, height: 3 },
+                      shadowOpacity: 0.3,
+                      shadowRadius: 4,
+                      borderWidth: 2,
+                      borderColor: 'rgba(255, 255, 255, 0.3)',
+                    }]}
+                    onPress={() => startPlayerTurn(player.id)}
+                  >
+                    <Text style={[styles.playerButtonText, { color: '#ffffff', fontWeight: 'bold' }]}>
+                      {player.isActive && isRunning ? '⏸️' : player.isActive && !isRunning ? '▶️' : 'Play'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+                
+                <View style={styles.playerStats}>
+                  <Text style={styles.statText}>🎯 Turns: {player.turns || 0}</Text>
+                  <Text style={styles.statText}>⏱️ Avg: {formatTime(getAverageTurnTime(player))}</Text>
+                </View>
+              </>
+            )}
           </View>
         );
       })}
@@ -844,7 +838,7 @@ const BoardGameTimer = () => {
   const [lastActionState, setLastActionState] = useState(null); // For undo functionality
   const [isOfflineMode, setIsOfflineMode] = useState(false);
   const [allowGuestControl, setAllowGuestControl] = useState(false);
-  const [allowGuestNames, setAllowGuestNames] = useState(false); // Separate control for names
+  const [allowGuestNames, setAllowGuestNames] = useState(false);
   const [isHostUser, setIsHostUser] = useState(true);
   const [lastActivePlayerId, setLastActivePlayerId] = useState(null);
   const [editingPlayerId, setEditingPlayerId] = useState(null); // Track which player is being edited
@@ -854,7 +848,28 @@ const BoardGameTimer = () => {
   
   const intervalRef = useRef();
   const gameRef = useRef(null);
-  const playerId = useRef(`player_${Date.now()}_${Math.random().toString(36).substring(2)}`);
+  // Generate or restore persistent playerId for host recognition
+  const generateOrRestorePlayerId = (gameId) => {
+    if (gameId) {
+      const savedPlayerId = localStorage.getItem(`playerId_${gameId}`);
+      if (savedPlayerId) {
+        return savedPlayerId;
+      }
+    }
+    return `player_${Date.now()}_${Math.random().toString(36).substring(2)}`;
+  };
+  
+  const playerId = useRef(generateOrRestorePlayerId());
+  
+  // Update playerId when gameId changes to maintain host status
+  useEffect(() => {
+    if (gameId) {
+      const savedPlayerId = localStorage.getItem(`playerId_${gameId}`);
+      if (savedPlayerId) {
+        playerId.current = savedPlayerId;
+      }
+    }
+  }, [gameId]);
   const gameNameDebounceRef = useRef();
   const joinGameIdDebounceRef = useRef();
   const playerNameDebounceRefs = useRef({});
@@ -951,7 +966,7 @@ const BoardGameTimer = () => {
   
   useEffect(() => {
     if (firebase && gameId && isHost) {
-      // Debounce all syncs to prevent loops
+      // Debounce all syncs to prevent loops - only sync on initial host/game changes
       clearTimeout(syncTimeoutRef.current);
       syncTimeoutRef.current = setTimeout(() => {
         syncGameStateToFirebase();
@@ -959,21 +974,33 @@ const BoardGameTimer = () => {
     }
     
     return () => clearTimeout(syncTimeoutRef.current);
-  }, [gameId, isHost]); // Minimal dependencies
+  }, [gameId, isHost]); // Minimal dependencies - only sync on host/game changes
   
-  // Separate effect for timer state changes - allow from anyone
+  // Separate effect for timer state changes - only sync when we own the timer
+  const timerSyncTimeoutRef = useRef();
+  const lastSyncedTimerState = useRef({ activePlayerId: null, isRunning: false });
+  
   useEffect(() => {
-    if (firebase && gameId && gameStarted) {
-      clearTimeout(syncTimeoutRef.current);
-      syncTimeoutRef.current = setTimeout(() => {
-        syncGameStateToFirebase();
-      }, 1000);
+    if (firebase && gameId && gameStarted && authoritativeTimerPlayerId === playerId.current) {
+      // Only sync if the timer state actually changed to prevent feedback loops
+      const currentState = { activePlayerId, isRunning };
+      const hasChanged = 
+        currentState.activePlayerId !== lastSyncedTimerState.current.activePlayerId ||
+        currentState.isRunning !== lastSyncedTimerState.current.isRunning;
+      
+      if (hasChanged) {
+        clearTimeout(timerSyncTimeoutRef.current);
+        timerSyncTimeoutRef.current = setTimeout(() => {
+          syncGameStateToFirebase();
+          lastSyncedTimerState.current = currentState;
+        }, 1000); // Reduced delay but only sync when we own the timer
+      }
     }
     
-    return () => clearTimeout(syncTimeoutRef.current);
-  }, [activePlayerId, isRunning]); // Timer changes sync from anyone
+    return () => clearTimeout(timerSyncTimeoutRef.current);
+  }, [activePlayerId, isRunning, authoritativeTimerPlayerId, playerId.current]); // Timer changes sync only from timer owner
 
-  // Text changes and settings sync - more responsive
+  // Text changes sync - more responsive (removed settings to prevent game resets)
   const gameNameTimeoutRef = useRef();
   useEffect(() => {
     if (firebase && gameId && isHost) {
@@ -984,16 +1011,21 @@ const BoardGameTimer = () => {
     }
     
     return () => clearTimeout(gameNameTimeoutRef.current);
-  }, [currentGameName, allowGuestControl, allowGuestNames]);
+  }, [currentGameName]); // Only sync on game name changes, not settings
 
-  // Immediate sync for player count changes (add/remove)
+  // Immediate sync for player count changes (add/remove) - not for timer updates
   const playerCountTimeoutRef = useRef();
+  const lastPlayerCount = useRef(players.length);
   useEffect(() => {
-    if (firebase && gameId) {
-      // Immediate sync for player count changes
-      syncGameStateToFirebase();
+    if (firebase && gameId && players.length !== lastPlayerCount.current) {
+      // Only sync when player count actually changes, not on timer updates
+      lastPlayerCount.current = players.length;
+      clearTimeout(playerCountTimeoutRef.current);
+      playerCountTimeoutRef.current = setTimeout(() => {
+        syncGameStateToFirebase();
+      }, 100); // Quick sync for player changes but not immediate
     }
-  }, [players]); // Sync when players array changes (count, names, etc.)
+  }, [players.length, firebase, gameId]); // Only depend on count, not full players array
 
   // Firebase listener effect
   useEffect(() => {
@@ -1044,6 +1076,9 @@ const BoardGameTimer = () => {
     setAllowGuestControl(false);
     setAllowGuestNames(false);
     setCurrentScreen('game');
+    
+    // Save playerId for this game to maintain host status
+    localStorage.setItem(`playerId_${newGameId}`, playerId.current);
     
     // Reset all state for fresh game
     setIsRunning(false);
@@ -1097,6 +1132,14 @@ const BoardGameTimer = () => {
         
         if (snapshot.exists()) {
           // Game exists, join it
+          const savedPlayerId = localStorage.getItem(`playerId_${gameIdToJoin}`);
+          if (savedPlayerId) {
+            playerId.current = savedPlayerId;
+          } else {
+            // Save new playerId for future sessions
+            localStorage.setItem(`playerId_${gameIdToJoin}`, playerId.current);
+          }
+          
           setGameId(gameIdToJoin);
           setIsHost(false);
           setIsHostUser(false);
@@ -1151,175 +1194,11 @@ const BoardGameTimer = () => {
     }
   };
 
-  const addPlayer = () => {
-    // Check max player limit
-    if (players.length >= 9) {
-      Alert.alert('Player Limit', 'Maximum 9 players allowed.');
-      return;
-    }
-    
-    // Allow adding players while timer is running (no pause needed)
-    
-    // Check guest permissions for adding players
-    if (!isHostUser && !allowGuestControl) {
-      Alert.alert('Not Allowed', 'The host has disabled guest control.');
-      return;
-    }
-    
-    // Mark this as a local action for optimistic updates
-    markLocalAction();
-    
-    saveStateForUndo(); // Save state for undo
-    const newId = Math.max(...players.map(p => p.id)) + 1;
-    const initialPlayerTime = timerMode === 'countdown' && !gameStarted ? initialTime : 0;
-    const newPlayer = {
-      id: newId,
-      name: `Player ${newId}`,
-      time: initialPlayerTime,
-      preciseTime: initialPlayerTime, // Initialize precise time
-      isActive: false,
-      color: getNextPlayerColor(),
-      turns: 0,
-      totalTurnTime: 0,
-      turnStartTime: null
-    };
-    setPlayers([...players, newPlayer]);
-    
-    // Immediately sync player addition to Firebase
-    if (firebase && gameId) {
-      setTimeout(() => {
-        syncGameStateToFirebase();
-      }, 50); // Very quick sync for player addition
-    }
-  };
-
-  const removePlayer = (id) => {
-    // Check guest permissions for removing players
-    if (!isHostUser && !allowGuestControl) {
-      Alert.alert('Not Allowed', 'The host has disabled guest control.');
-      return;
-    }
-    
-    if (players.length > 2) {
-      const playerToRemove = players.find(p => p.id === id);
-      
-      // Check if player has been actively used (has timer data)
-      if (playerToRemove && (playerToRemove.time > 0 || playerToRemove.turns > 0)) {
-        showAlert(
-          'Remove Player',
-          `Remove "${playerToRemove.name}" who has ${formatTime(playerToRemove.time)} recorded? This cannot be undone.`,
-          [
-            { text: 'Cancel', style: 'cancel' },
-            {
-              text: 'Remove',
-              style: 'destructive',
-              onPress: () => {
-                saveStateForUndo(); // Save state for undo
-                setPlayers(players.filter(p => p.id !== id));
-                if (activePlayerId === id) {
-                  setActivePlayerId(null);
-                  setIsRunning(false);
-                }
-              }
-            }
-          ]
-        );
-      } else {
-        // No confirmation needed for unused players
-        saveStateForUndo(); // Save state for undo
-        setPlayers(players.filter(p => p.id !== id));
-        if (activePlayerId === id) {
-          setActivePlayerId(null);
-          setIsRunning(false);
-        }
-      }
-    }
-  };
-
-  const updatePlayerName = useCallback((id, name) => {
-    // Check permissions only in multiplayer mode when connected to Firebase
-    if (firebase && gameId && !isHostUser && !allowGuestNames) {
-      Alert.alert('Not Allowed', 'The host has disabled guest name editing.');
-      return;
-    }
-    
-    // Mark this as a local action for optimistic updates
-    markLocalAction();
-    
-    // Update player name immediately
-    setPlayers(prev => prev.map(player => 
-      player.id === id ? { ...player, name } : player
-    ));
-    
-    // Immediate sync for name changes
-    if (firebase && gameId) {
-      syncGameStateToFirebase(); // Immediate sync for name changes
-    }
-  }, [isHostUser, allowGuestNames, firebase, gameId]);
-
-  const updatePlayerColor = useCallback((playerId, color) => {
-    // Check guest permissions for changing player colors only in multiplayer mode
-    if (firebase && gameId && !isHostUser && !allowGuestNames) {
-      Alert.alert('Not Allowed', 'The host has disabled guest name and color editing.');
-      return;
-    }
-    
-    // Mark this as a local action for optimistic updates
-    markLocalAction();
-    
-    setPlayers(prev => prev.map(player => 
-      player.id === playerId ? { ...player, color } : player
-    ));
-    
-    // Immediate sync for color changes
-    if (firebase && gameId) {
-      syncGameStateToFirebase(); // Immediate sync for color changes
-    }
-  }, [isHostUser, allowGuestNames, firebase, gameId]);
-
-  const handleGameNameChange = useCallback((text) => {
-    // Check permissions only in multiplayer mode when connected to Firebase
-    if (firebase && gameId && !isHostUser && !allowGuestNames) {
-      Alert.alert('Not Allowed', 'The host has disabled guest name editing.');
-      return;
-    }
-    
-    // Mark this as a local action for optimistic updates
-    markLocalAction();
-    
-    // Update game name immediately
-    setCurrentGameName(text);
-    
-    // Immediate sync for name changes
-    if (firebase && gameId) {
-      syncGameStateToFirebase(); // Immediate sync for name changes
-    }
-  }, [isHostUser, allowGuestNames, firebase, gameId]);
-
-  const handleJoinGameIdChange = useCallback((text) => {
-    setJoinGameId(text.toUpperCase());
-  }, []);
-
-  const handlePlayerNameChange = useCallback((playerId) => 
-    (text) => {
-      console.log('Player name changing:', playerId, text);
-      updatePlayerName(playerId, text);
-    }, [updatePlayerName]
-  );
-
-  // Helper function to mark local actions for optimistic updates
-  const markLocalAction = () => {
-    const now = Date.now();
-    lastLocalActionRef.current = now;
-    ignoreUpdatesUntilRef.current = now + 1500; // Ignore Firebase updates for 1.5 seconds
-  };
-
-
   // Input sanitization and validation
   const sanitizeGameData = (data) => {
     return {
-      players: (data.players || []).slice(0, 9).map(p => ({
-        id: Math.max(1, Math.min(100, parseInt(p.id) || 1)),
+      players: (data.players || []).slice(0, 9).map((p, index) => ({
+        id: (typeof p.id === 'number' && p.id > 0) ? Math.min(100, p.id) : (index + 1), // Preserve original IDs, fallback to index-based
         name: String(p.name || '').substring(0, 50).replace(/[<>\"'&]/g, ''),
         time: Math.max(0, Math.min(28800, parseInt(p.time) || 0)),
         isActive: Boolean(p.isActive),
@@ -1399,6 +1278,225 @@ const BoardGameTimer = () => {
     }
   };
 
+  const addPlayer = () => {
+    // Check max player limit
+    if (players.length >= 9) {
+      Alert.alert('Player Limit', 'Maximum 9 players allowed.');
+      return;
+    }
+    
+    // Allow adding players while timer is running (no pause needed)
+    
+    // Check guest permissions for adding players
+    if (!isHostUser && !allowGuestControl) {
+      Alert.alert('Not Allowed', 'The host has disabled guest control.');
+      return;
+    }
+    
+    // Mark this as a local action for optimistic updates
+    markLocalAction();
+    
+    saveStateForUndo(); // Save state for undo
+    const newId = Math.max(...players.map(p => p.id)) + 1;
+    const initialPlayerTime = timerMode === 'countdown' && !gameStarted ? initialTime : 0;
+    const newPlayer = {
+      id: newId,
+      name: `Player ${newId}`,
+      time: initialPlayerTime,
+      preciseTime: initialPlayerTime, // Initialize precise time
+      isActive: false,
+      color: getNextPlayerColor(),
+      turns: 0,
+      totalTurnTime: 0,
+      turnStartTime: null
+    };
+    setPlayers([...players, newPlayer]);
+    
+    // Immediately sync player addition to Firebase
+    if (firebase && gameId) {
+      syncGameStateToFirebase(); // Immediate sync for player addition
+    }
+  };
+
+  const removePlayer = (id) => {
+    // Only hosts can remove players in multiplayer mode
+    if (firebase && gameId && !isHostUser) {
+      Alert.alert('Not Allowed', 'Only the host can remove players.');
+      return;
+    }
+    
+    if (players.length > 2) {
+      const playerToRemove = players.find(p => p.id === id);
+      
+      // Check if player has been actively used (has timer data)
+      if (playerToRemove && (playerToRemove.time > 0 || playerToRemove.turns > 0)) {
+        showAlert(
+          'Remove Player',
+          `Remove "${playerToRemove.name}" who has ${formatTime(playerToRemove.time)} recorded? This cannot be undone.`,
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Remove',
+              style: 'destructive',
+              onPress: () => {
+                saveStateForUndo(); // Save state for undo
+                setPlayers(players.filter(p => p.id !== id));
+                if (activePlayerId === id) {
+                  setActivePlayerId(null);
+                  setIsRunning(false);
+                }
+              }
+            }
+          ]
+        );
+      } else {
+        // No confirmation needed for unused players
+        saveStateForUndo(); // Save state for undo
+        setPlayers(players.filter(p => p.id !== id));
+        if (activePlayerId === id) {
+          setActivePlayerId(null);
+          setIsRunning(false);
+        }
+      }
+    }
+  };
+
+  const updatePlayerName = useCallback((id, name) => {
+    // Check permissions only in multiplayer mode when connected to Firebase
+    if (firebase && gameId && !isHostUser && !allowGuestNames) {
+      Alert.alert('Not Allowed', 'The host has disabled guest name editing.');
+      return;
+    }
+    
+    // Update player name immediately (optimistic update)
+    setPlayers(prev => prev.map(player => 
+      player.id === id ? { ...player, name } : player
+    ));
+    
+    // Mark this as a local action BEFORE Firebase sync for stronger protection
+    markLocalAction();
+    
+    // Immediate sync for name changes - no delay needed with strong conflict protection  
+    if (firebase && gameId) {
+      syncGameStateToFirebase();
+      console.log('Name change synced immediately for player:', id, name);
+    }
+  }, [isHostUser, allowGuestNames, firebase, gameId]);
+
+  const updatePlayerColor = useCallback((playerId, color) => {
+    console.log('updatePlayerColor called:', playerId, color);
+    // Check guest permissions for changing player colors only in multiplayer mode
+    if (firebase && gameId && !isHostUser && !allowGuestNames) {
+      console.log('Color change blocked: guest permissions');
+      Alert.alert('Not Allowed', 'The host has disabled guest name and color editing.');
+      return;
+    }
+    
+    console.log('Setting player color locally...');
+    setPlayers(prev => {
+      const updated = prev.map(player => 
+        player.id === playerId ? { ...player, color } : player
+      );
+      console.log('Color updated locally:', updated.find(p => p.id === playerId)?.color);
+      return updated;
+    });
+    
+    // Mark this as a local action BEFORE Firebase sync for stronger protection
+    markLocalAction();
+    
+    // Immediate sync for color changes - no delay needed with strong conflict protection
+    if (firebase && gameId) {
+      console.log('Syncing color change to Firebase...');
+      syncGameStateToFirebase();
+      console.log('Color change synced immediately for player:', playerId, color);
+    }
+  }, [isHostUser, allowGuestNames, firebase, gameId]);
+
+  const handleGameNameChange = useCallback((text) => {
+    // Check permissions only in multiplayer mode when connected to Firebase
+    if (firebase && gameId && !isHostUser && !allowGuestControl) {
+      Alert.alert('Not Allowed', 'The host has disabled guest name editing.');
+      return;
+    }
+    
+    // Mark this as a local action for optimistic updates
+    markLocalAction();
+    
+    // Update game name immediately
+    setCurrentGameName(text);
+    
+    // Immediate sync for name changes
+    if (firebase && gameId) {
+      syncGameStateToFirebase(); // Immediate sync for name changes
+    }
+  }, [isHostUser, allowGuestNames, firebase, gameId]);
+
+  // Handle settings changes with immediate sync for hosts
+  const handleGuestControlToggle = useCallback(() => {
+    if (!isHostUser) return; // Only hosts can change this
+    
+    const newValue = !allowGuestControl;
+    setAllowGuestControl(newValue);
+    console.log('Host changed guest timer controls to:', newValue);
+    
+    // Sync only the specific setting - don't sync entire game state
+    if (firebase && gameId) {
+      setTimeout(async () => {
+        try {
+          const settingRef = firebase.ref(firebase.database, `games/${gameId}/allowGuestControl`);
+          await firebase.set(settingRef, newValue);
+          console.log('Guest control setting synced directly:', newValue);
+        } catch (error) {
+          console.log('Failed to sync guest control setting:', error);
+        }
+      }, 200);
+    }
+  }, [allowGuestControl, isHostUser, firebase, gameId]);
+
+  const handleGuestNamesToggle = useCallback(() => {
+    if (!isHostUser) return; // Only hosts can change this
+    
+    const newValue = !allowGuestNames;
+    setAllowGuestNames(newValue);
+    console.log('Host changed guest name editing to:', newValue);
+    
+    // Sync only the specific setting - don't sync entire game state
+    if (firebase && gameId) {
+      setTimeout(async () => {
+        try {
+          const settingRef = firebase.ref(firebase.database, `games/${gameId}/allowGuestNames`);
+          await firebase.set(settingRef, newValue);
+          console.log('Guest names setting synced directly:', newValue);
+        } catch (error) {
+          console.log('Failed to sync guest names setting:', error);
+        }
+      }, 200);
+    }
+  }, [allowGuestNames, isHostUser, firebase, gameId]);
+
+
+  const handleJoinGameIdChange = useCallback((text) => {
+    setJoinGameId(text.toUpperCase());
+  }, []);
+
+  const handlePlayerNameChange = useCallback((playerId) => 
+    (text) => {
+      console.log('Player name changing:', playerId, text);
+      updatePlayerName(playerId, text);
+    }, [updatePlayerName]
+  );
+
+  // Helper function to mark local actions for optimistic updates
+  const markLocalAction = () => {
+    const now = Date.now();
+    lastLocalActionRef.current = now;
+    // Longer ignore window to ensure our changes sync before accepting remote updates
+    ignoreUpdatesUntilRef.current = now + 500; // Long enough to cover sync delay (300ms) + buffer
+    console.log('markLocalAction called, ignoring updates for 500ms');
+  };
+
+
+
   const listenToGameChanges = () => {
     if (!firebase || !firebase.database || !gameId) return;
 
@@ -1441,7 +1539,7 @@ const BoardGameTimer = () => {
         
         // Ignore updates if we just made a local action (optimistic updates)
         if (now < ignoreUpdatesUntilRef.current) {
-          console.log('Ignoring Firebase update due to recent local action');
+          console.log('Ignoring Firebase update due to recent local action, remaining:', ignoreUpdatesUntilRef.current - now + 'ms');
           setConnectionStatus('connected');
           setIsOnline(true);
           return;
@@ -1450,9 +1548,9 @@ const BoardGameTimer = () => {
         // Update if this change came from another player AND we haven't made a conflicting local action
         if (data.lastActionPlayerId !== playerId.current) {
           // Additional check: if the update is very recent and we just made an action, prioritize our action
-          // But reduce the conflict window to avoid guest resets
+          // Extended conflict window to ensure our local changes have time to sync
           if (data.lastActionPlayerId && data.lastUpdated > lastLocalActionRef.current && 
-              now - lastLocalActionRef.current < 500) {
+              now - lastLocalActionRef.current < 600) {
             console.log('Conflict detected: prioritizing recent local action');
             setConnectionStatus('connected');
             setIsOnline(true);
@@ -1462,14 +1560,65 @@ const BoardGameTimer = () => {
           // Sanitize incoming data and batch updates to prevent multiple re-renders
           const sanitizedData = sanitizeGameData(data);
           
-          // Protect timer state if we're the authoritative timer owner
-          const isLocalPlayerActive = activePlayerId !== null && sanitizedData.authoritativeTimerPlayerId === playerId.current;
+          // Validation: Don't apply updates that would reset the game to initial state
+          const hasValidPlayers = sanitizedData.players && sanitizedData.players.length > 0;
+          const playersHaveNames = sanitizedData.players.some(p => p.name && p.name.trim() !== '' && !p.name.startsWith('Player '));
+          const isLikelyReset = !hasValidPlayers || (!playersHaveNames && players.some(p => p.name && !p.name.startsWith('Player ')));
+          
+          if (isLikelyReset) {
+            console.log('Detected potential state reset - rejecting Firebase update:', { 
+              hasValidPlayers, 
+              playersHaveNames, 
+              currentPlayersHaveNames: players.some(p => p.name && !p.name.startsWith('Player ')),
+              sanitizedPlayers: sanitizedData.players 
+            });
+            setConnectionStatus('connected');
+            setIsOnline(true);
+            return; // Don't apply updates that look like resets
+          }
+          
+          // Simple timer protection - only protect if we're actively running the timer
+          const weOwnTimer = authoritativeTimerPlayerId === playerId.current && isRunning && activePlayerId !== null;
+          
+          console.log('Timer protection check:', { 
+            weOwnTimer, 
+            isRunning, 
+            activePlayerId,
+            authoritativeTimerPlayerId 
+          });
           
           const updates = {
-            players: sanitizedData.players,
-            // Don't override timer state if we're the authoritative timer owner
-            activePlayerId: isLocalPlayerActive ? activePlayerId : sanitizedData.activePlayerId,
-            isRunning: isLocalPlayerActive ? isRunning : sanitizedData.isRunning,
+            players: sanitizedData.players.map(incomingPlayer => {
+              const localPlayer = players.find(p => p.id === incomingPlayer.id);
+              
+              // If we're running the timer for this player, keep our timer data
+              if (weOwnTimer && incomingPlayer.id === activePlayerId) {
+                return localPlayer ? {
+                  ...incomingPlayer,
+                  time: localPlayer.time,
+                  preciseTime: localPlayer.preciseTime || localPlayer.time,
+                  isActive: true
+                } : incomingPlayer;
+              }
+              
+              // For other players, preserve local name and color changes if recent
+              if (localPlayer) {
+                return {
+                  ...incomingPlayer,
+                  // Keep local name if we have a more recent local change
+                  name: (now - lastLocalActionRef.current < 1000 && localPlayer.name !== incomingPlayer.name) 
+                    ? localPlayer.name : incomingPlayer.name,
+                  // Keep local color if we have a more recent local change  
+                  color: (now - lastLocalActionRef.current < 1000 && localPlayer.color !== incomingPlayer.color)
+                    ? localPlayer.color : incomingPlayer.color
+                };
+              }
+              
+              return incomingPlayer;
+            }),
+            // Only protect timer state if we're actively running it
+            activePlayerId: weOwnTimer ? activePlayerId : sanitizedData.activePlayerId,
+            isRunning: weOwnTimer ? isRunning : sanitizedData.isRunning,
             gameStarted: sanitizedData.gameStarted,
             timerMode: sanitizedData.timerMode,
             initialTime: sanitizedData.initialTime,
@@ -1481,21 +1630,34 @@ const BoardGameTimer = () => {
           
           // Apply all updates at once, but protect currently editing player and authoritative timer
           if (editingPlayerId !== null) {
-            // Merge players but keep the currently editing player's name
+            // Merge players but keep the currently editing player's name and prevent player removal
             const currentEditingPlayer = players.find(p => p.id === editingPlayerId);
             if (currentEditingPlayer) {
-              updates.players = updates.players.map(p => 
-                p.id === editingPlayerId ? { ...p, name: currentEditingPlayer.name } : p
-              );
+              // Ensure the editing player is preserved in the updates
+              const editingPlayerExists = updates.players.some(p => p.id === editingPlayerId);
+              if (!editingPlayerExists) {
+                // If the editing player was removed from the update, add them back
+                updates.players.push(currentEditingPlayer);
+                console.log('Restored editing player to prevent removal during name edit:', editingPlayerId);
+              } else {
+                // Just update the name to match current local state
+                updates.players = updates.players.map(p => 
+                  p.id === editingPlayerId ? { ...p, name: currentEditingPlayer.name } : p
+                );
+              }
             }
           }
           
-          // If we are the authoritative timer owner, don't let others overwrite our timer count
+          // If we are the authoritative timer owner, don't let others overwrite our timer count and precise time
           if (data.authoritativeTimerPlayerId === playerId.current && activePlayerId !== null) {
             const currentActivePlayer = players.find(p => p.id === activePlayerId);
             if (currentActivePlayer) {
               updates.players = updates.players.map(p => 
-                p.id === activePlayerId ? { ...p, time: currentActivePlayer.time } : p
+                p.id === activePlayerId ? { 
+                  ...p, 
+                  time: currentActivePlayer.time,
+                  preciseTime: currentActivePlayer.preciseTime || currentActivePlayer.time
+                } : p
               );
             }
           }
@@ -1504,13 +1666,26 @@ const BoardGameTimer = () => {
           setIsRunning(updates.isRunning);
           setGameStarted(updates.gameStarted);
           
+          // Update authoritative timer player ID from Firebase
+          if (sanitizedData.authoritativeTimerPlayerId) {
+            setAuthoritativeTimerPlayerId(sanitizedData.authoritativeTimerPlayerId);
+            console.log('Updated timer authority from Firebase:', sanitizedData.authoritativeTimerPlayerId);
+          }
+          
           // Only update game name if we're not currently editing it
           if (document.activeElement?.placeholder !== "Enter game name (optional)") {
             setCurrentGameName(updates.currentGameName);
           }
           
-          setAllowGuestControl(updates.allowGuestControl);
-          setAllowGuestNames(updates.allowGuestNames);
+          // Only update settings if we're not the host (guests should receive host's settings)
+          // Hosts maintain control of their own settings
+          if (!isHostUser) {
+            setAllowGuestControl(updates.allowGuestControl);
+            setAllowGuestNames(updates.allowGuestNames);
+            console.log('Guest received permission update:', { allowGuestControl: updates.allowGuestControl, allowGuestNames: updates.allowGuestNames });
+          } else {
+            console.log('Host ignoring permission update to maintain authority');
+          }
           
           // Only update host status in multiplayer games
           if (gameId && firebase) {
@@ -1541,10 +1716,11 @@ const BoardGameTimer = () => {
   };
 
   const startPlayerTurn = (newPlayerId) => {
-    // Timer controls always work - no restrictions needed for clicking timers
-    
-    // Mark this as a local action for optimistic updates
-    markLocalAction();
+    // Check guest timer permissions in multiplayer mode
+    if (firebase && gameId && !isHostUser && !allowGuestControl) {
+      Alert.alert('Not Allowed', 'The host has disabled guest timer controls.');
+      return;
+    }
     
     // If clicking the active player, toggle pause/resume
     if (newPlayerId === activePlayerId && gameStarted) {
@@ -1556,14 +1732,13 @@ const BoardGameTimer = () => {
       return;
     }
     
-    saveStateForUndo(); // Save state for undo
+    console.log('Starting turn for player:', newPlayerId);
     
-    // Pause timer first to prevent race conditions
-    const wasRunning = isRunning;
-    setIsRunning(false);
+    saveStateForUndo(); // Save state for undo
     
     const currentTime = Date.now();
     
+    // Update players state immediately - simple and direct
     setPlayers(prev => prev.map(player => {
       if (player.id === activePlayerId && player.isActive && activePlayerId !== newPlayerId) {
         // End current player's turn and record statistics
@@ -1576,7 +1751,7 @@ const BoardGameTimer = () => {
           turnStartTime: null
         };
       } else if (player.id === newPlayerId) {
-        // Start new player's turn (don't increment turn count yet - wait until turn ends)
+        // Start new player's turn
         return {
           ...player,
           isActive: true,
@@ -1586,11 +1761,14 @@ const BoardGameTimer = () => {
       return { ...player, isActive: false };
     }));
     
-    // Set new active player and start timer automatically
+    // Set new active player and start timer immediately
     setActivePlayerId(newPlayerId);
-    setIsRunning(true); // Always start timer when switching to a player
+    setIsRunning(true);
     setGameStarted(true);
-    setAuthoritativeTimerPlayerId(playerId.current); // Mark us as the authoritative timer owner
+    
+    // Simple timer ownership - whoever clicked gets it
+    setAuthoritativeTimerPlayerId(playerId.current);
+    console.log('Timer started by:', playerId.current);
     
     // Play turn sound if enabled
     if (playTurnSounds) {
@@ -1599,18 +1777,21 @@ const BoardGameTimer = () => {
     
     // Vibrate on mobile if supported
     if (navigator.vibrate) {
-      navigator.vibrate([100, 50, 100]); // Short vibration pattern
+      navigator.vibrate([100, 50, 100]);
     }
     
-    // Sync to Firebase if available (timer actions sync for everyone)
+    // Simple sync - just send the current state
     if (firebase && gameId) {
       syncGameStateToFirebase();
     }
   };
 
   const pauseGame = () => {
-    // Mark this as a local action for optimistic updates
-    markLocalAction();
+    // Check guest timer permissions in multiplayer mode
+    if (firebase && gameId && !isHostUser && !allowGuestControl) {
+      Alert.alert('Not Allowed', 'The host has disabled guest timer controls.');
+      return;
+    }
     
     saveStateForUndo(); // Save state for undo
     // Store the last active player for resume
@@ -1644,8 +1825,11 @@ const BoardGameTimer = () => {
   };
   
   const resumeGame = () => {
-    // Mark this as a local action for optimistic updates
-    markLocalAction();
+    // Check guest timer permissions in multiplayer mode
+    if (firebase && gameId && !isHostUser && !allowGuestControl) {
+      Alert.alert('Not Allowed', 'The host has disabled guest timer controls.');
+      return;
+    }
     
     // Resume with the last active player if no current active player
     const playerToResume = activePlayerId || lastActivePlayerId;
@@ -1661,8 +1845,11 @@ const BoardGameTimer = () => {
       }
       setIsRunning(true);
       
-      // Make this player the authoritative timer owner when resuming
-      setAuthoritativeTimerPlayerId(playerId.current);
+      // Make this player the authoritative timer owner when resuming (only if not already owned)
+      if (!authoritativeTimerPlayerId || authoritativeTimerPlayerId === playerId.current) {
+        setAuthoritativeTimerPlayerId(playerId.current);
+        console.log('Taking timer authority on resume:', playerId.current);
+      }
       
       // Immediately sync resume state to Firebase for multiplayer
       if (firebase && gameId) {
@@ -2038,7 +2225,7 @@ const BoardGameTimer = () => {
             setGameId(''); // New session, no multiplayer ID
             setIsHost(false);
             setIsHostUser(true); // Always host in local games
-            setAllowGuestControl(false);
+            setAllowGuestControl(true); // Allow timer controls in local games
             setAllowGuestNames(true); // Allow name editing in local games
             
             // Load saved game data with appropriate setup
@@ -2331,7 +2518,7 @@ const BoardGameTimer = () => {
                         styles.settingOption,
                         allowGuestControl && styles.settingOptionActive
                       ]}
-                      onPress={() => setAllowGuestControl(!allowGuestControl)}
+                      onPress={handleGuestControlToggle}
                     >
                       <Text style={[
                         styles.settingOptionText,
@@ -2343,7 +2530,7 @@ const BoardGameTimer = () => {
                         styles.settingOption,
                         !allowGuestControl && styles.settingOptionActive
                       ]}
-                      onPress={() => setAllowGuestControl(!allowGuestControl)}
+                      onPress={handleGuestControlToggle}
                     >
                       <Text style={[
                         styles.settingOptionText,
@@ -2354,14 +2541,14 @@ const BoardGameTimer = () => {
                 </View>
                 
                 <View style={styles.settingSection}>
-                  <Text style={styles.settingLabel}>Guest Name Editing</Text>
+                  <Text style={styles.settingLabel}>Guest Name & Color Editing</Text>
                   <View style={styles.settingOptions}>
                     <TouchableOpacity
                       style={[
                         styles.settingOption,
                         allowGuestNames && styles.settingOptionActive
                       ]}
-                      onPress={() => setAllowGuestNames(!allowGuestNames)}
+                      onPress={handleGuestNamesToggle}
                     >
                       <Text style={[
                         styles.settingOptionText,
@@ -2373,15 +2560,16 @@ const BoardGameTimer = () => {
                         styles.settingOption,
                         !allowGuestNames && styles.settingOptionActive
                       ]}
-                      onPress={() => setAllowGuestNames(!allowGuestNames)}
+                      onPress={handleGuestNamesToggle}
                     >
                       <Text style={[
                         styles.settingOptionText,
                         !allowGuestNames && styles.settingOptionTextActive
-                      ]}>🔒 Locked</Text>
+                      ]}>🔒 Host Only</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
+                
               </>
             )}
             
@@ -3419,6 +3607,81 @@ const styles = StyleSheet.create({
   selectedColorCheckMobile: {
     fontSize: 10,
     fontWeight: 'bold',
+  },
+  // New 5-row layout styles
+  playerControlsRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+  playerControlsRowMobile: {
+    paddingVertical: 2,
+    marginBottom: 4,
+  },
+  playerNameRow: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  playerNameRowMobile: {
+    paddingHorizontal: 4,
+    paddingVertical: 6,
+    marginBottom: 6,
+  },
+  playerNameTouchArea: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 32,
+  },
+  playerNameTextMobileLarge: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#ffffff',
+    textAlign: 'center',
+  },
+  playerNameInputMobileLarge: {
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    color: '#ffffff',
+    minHeight: 36,
+  },
+  playerButtonSectionMobile: {
+    marginTop: 8,
+    marginBottom: 8,
+    paddingHorizontal: 8,
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  playerButtonMobileSquare: {
+    width: '90%',
+    aspectRatio: 2,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    minHeight: 50,
+  },
+  playerButtonTextMobileSquare: {
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  playerStatsBottom: {
+    marginTop: 2,
+    marginBottom: 2,
+    paddingHorizontal: 4,
+    paddingVertical: 3,
+    backgroundColor: 'rgba(0, 0, 0, 0.2)',
+    height: 24,
+    justifyContent: 'center',
+    borderRadius: 4,
   },
 });
 
