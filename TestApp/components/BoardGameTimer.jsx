@@ -587,7 +587,20 @@ const GameScreen = ({
                     value={player.name}
                     onChangeText={handlePlayerNameChange(player.id)}
                     onFocus={() => setEditingPlayerId(player.id)}
-                    onBlur={() => setEditingPlayerId(null)}
+                    onBlur={(e) => {
+                      setEditingPlayerId(null);
+                      const finalName = e.target.value || player.name;
+                      
+                      // Clear debounce timeout and force immediate sync
+                      if (window.nameTimeouts && window.nameTimeouts[player.id]) {
+                        clearTimeout(window.nameTimeouts[player.id]);
+                        delete window.nameTimeouts[player.id];
+                        
+                        // Use the handlePlayerNameChange function that's in scope
+                        handlePlayerNameChange(player.id)(finalName);
+                        console.log('Final name synced on blur for player:', player.id, finalName);
+                      }
+                    }}
                     autoComplete="off"
                     selectTextOnFocus={true}
                     editable={true}
@@ -1243,9 +1256,20 @@ const BoardGameTimer = () => {
     // Sanitize data before sending to Firebase
     const gameData = sanitizeGameData(rawGameData);
 
-    // Only set hostId if this player is the host, otherwise preserve existing hostId
+    // Always set hostId - either this player's ID if they're host, or preserve existing
     if (isHost) {
       gameData.hostId = playerId.current;
+    } else {
+      // For guests, fetch current hostId from Firebase to preserve it
+      try {
+        const currentGameRef = firebase.ref(firebase.database, `games/${gameId}/hostId`);
+        const hostSnapshot = await firebase.get(currentGameRef);
+        if (hostSnapshot.exists()) {
+          gameData.hostId = hostSnapshot.val();
+        }
+      } catch (error) {
+        console.log('Could not preserve hostId:', error);
+      }
     }
 
     if (firebase && firebase.database) {
@@ -1376,12 +1400,24 @@ const BoardGameTimer = () => {
     // Mark this as a local action BEFORE Firebase sync for stronger protection
     markLocalAction();
     
-    // Immediate sync for name changes - no delay needed with strong conflict protection  
+    // Debounced sync for name changes - only sync after user stops typing
     if (firebase && gameId) {
-      syncGameStateToFirebase();
-      console.log('Name change synced immediately for player:', id, name);
+      // Clear any existing timeout for this player
+      if (window.nameTimeouts && window.nameTimeouts[id]) {
+        clearTimeout(window.nameTimeouts[id]);
+      }
+      
+      // Initialize timeouts object if it doesn't exist
+      if (!window.nameTimeouts) window.nameTimeouts = {};
+      
+      // Set new timeout - sync after 500ms of no typing
+      window.nameTimeouts[id] = setTimeout(() => {
+        syncGameStateToFirebase();
+        console.log('Name change synced for player:', id, name);
+        delete window.nameTimeouts[id];
+      }, 500); // 500ms debounce
     }
-  }, [isHostUser, allowGuestNames, firebase, gameId]);
+  }, [isHostUser, allowGuestNames, firebase, gameId, syncGameStateToFirebase]);
 
   const updatePlayerColor = useCallback((playerId, color) => {
     console.log('updatePlayerColor called:', playerId, color);
@@ -1404,13 +1440,22 @@ const BoardGameTimer = () => {
     // Mark this as a local action BEFORE Firebase sync for stronger protection
     markLocalAction();
     
-    // Immediate sync for color changes - no delay needed with strong conflict protection
+    // Immediate sync for color changes with stronger protection
     if (firebase && gameId) {
-      console.log('Syncing color change to Firebase...');
-      syncGameStateToFirebase();
-      console.log('Color change synced immediately for player:', playerId, color);
+      // Clear any existing timeout for color changes
+      if (window.colorTimeout) {
+        clearTimeout(window.colorTimeout);
+      }
+      
+      // Sync immediately for colors but with very strong protection
+      window.colorTimeout = setTimeout(() => {
+        console.log('Syncing color change to Firebase...');
+        syncGameStateToFirebase();
+        console.log('Color change synced for player:', playerId, color);
+        window.colorTimeout = null;
+      }, 100); // Quick sync for colors
     }
-  }, [isHostUser, allowGuestNames, firebase, gameId]);
+  }, [isHostUser, allowGuestNames, firebase, gameId, syncGameStateToFirebase]);
 
   const handleGameNameChange = useCallback((text) => {
     // Check permissions only in multiplayer mode when connected to Firebase
@@ -1491,8 +1536,8 @@ const BoardGameTimer = () => {
     const now = Date.now();
     lastLocalActionRef.current = now;
     // Longer ignore window to ensure our changes sync before accepting remote updates
-    ignoreUpdatesUntilRef.current = now + 500; // Long enough to cover sync delay (300ms) + buffer
-    console.log('markLocalAction called, ignoring updates for 500ms');
+    ignoreUpdatesUntilRef.current = now + 1500; // Increased to 1.5s for much stronger protection
+    console.log('markLocalAction called, ignoring updates for 1500ms');
   };
 
 
@@ -1538,7 +1583,11 @@ const BoardGameTimer = () => {
         const now = Date.now();
         
         // Ignore updates if we just made a local action (optimistic updates)
-        if (now < ignoreUpdatesUntilRef.current) {
+        // BUT allow initial loading when joining a game
+        const localPlayersAreDefault = players.length <= 2 && players.every(p => p.name.startsWith('Player '));
+        const isInitialLoad = localPlayersAreDefault || players.length === 0;
+        
+        if (!isInitialLoad && now < ignoreUpdatesUntilRef.current) {
           console.log('Ignoring Firebase update due to recent local action, remaining:', ignoreUpdatesUntilRef.current - now + 'ms');
           setConnectionStatus('connected');
           setIsOnline(true);
@@ -1561,16 +1610,20 @@ const BoardGameTimer = () => {
           const sanitizedData = sanitizeGameData(data);
           
           // Validation: Don't apply updates that would reset the game to initial state
+          // BUT allow initial loading when joining a game (when local players array is empty or default)
           const hasValidPlayers = sanitizedData.players && sanitizedData.players.length > 0;
           const playersHaveNames = sanitizedData.players.some(p => p.name && p.name.trim() !== '' && !p.name.startsWith('Player '));
-          const isLikelyReset = !hasValidPlayers || (!playersHaveNames && players.some(p => p.name && !p.name.startsWith('Player ')));
+          const localPlayersAreDefault = players.length <= 2 && players.every(p => p.name.startsWith('Player '));
+          const isInitialLoad = localPlayersAreDefault || players.length === 0;
+          const isLikelyReset = !isInitialLoad && (!hasValidPlayers || (!playersHaveNames && players.some(p => p.name && !p.name.startsWith('Player '))));
           
           if (isLikelyReset) {
             console.log('Detected potential state reset - rejecting Firebase update:', { 
               hasValidPlayers, 
               playersHaveNames, 
               currentPlayersHaveNames: players.some(p => p.name && !p.name.startsWith('Player ')),
-              sanitizedPlayers: sanitizedData.players 
+              sanitizedPlayers: sanitizedData.players,
+              isInitialLoad
             });
             setConnectionStatus('connected');
             setIsOnline(true);
@@ -1616,9 +1669,9 @@ const BoardGameTimer = () => {
               
               return incomingPlayer;
             }),
-            // Only protect timer state if we're actively running it
-            activePlayerId: weOwnTimer ? activePlayerId : sanitizedData.activePlayerId,
-            isRunning: weOwnTimer ? isRunning : sanitizedData.isRunning,
+            // Accept pause commands even if we own the timer, otherwise protect running state
+            activePlayerId: sanitizedData.activePlayerId, // Always accept player changes
+            isRunning: !sanitizedData.isRunning ? false : (weOwnTimer ? isRunning : sanitizedData.isRunning), // Always accept pause
             gameStarted: sanitizedData.gameStarted,
             timerMode: sanitizedData.timerMode,
             initialTime: sanitizedData.initialTime,
@@ -1677,19 +1730,24 @@ const BoardGameTimer = () => {
             setCurrentGameName(updates.currentGameName);
           }
           
-          // Only update settings if we're not the host (guests should receive host's settings)
-          // Hosts maintain control of their own settings
-          if (!isHostUser) {
-            setAllowGuestControl(updates.allowGuestControl);
-            setAllowGuestNames(updates.allowGuestNames);
-            console.log('Guest received permission update:', { allowGuestControl: updates.allowGuestControl, allowGuestNames: updates.allowGuestNames });
-          } else {
-            console.log('Host ignoring permission update to maintain authority');
+          // Update host status first
+          const newIsHostUser = gameId && firebase ? updates.isHostUser : isHostUser;
+          if (gameId && firebase) {
+            setIsHostUser(newIsHostUser);
           }
           
-          // Only update host status in multiplayer games
-          if (gameId && firebase) {
-            setIsHostUser(updates.isHostUser);
+          // Only update settings if we're not the host (guests should receive host's settings)
+          // Use the NEW host status, not the old one
+          if (!newIsHostUser) {
+            setAllowGuestControl(updates.allowGuestControl);
+            setAllowGuestNames(updates.allowGuestNames);
+            console.log('Guest received permission update:', { 
+              allowGuestControl: updates.allowGuestControl, 
+              allowGuestNames: updates.allowGuestNames,
+              newIsHostUser 
+            });
+          } else {
+            console.log('Host ignoring permission update to maintain authority, isHost:', newIsHostUser, 'playerId:', playerId.current, 'hostId:', data.hostId);
           }
         }
         setConnectionStatus('connected');
@@ -1716,6 +1774,15 @@ const BoardGameTimer = () => {
   };
 
   const startPlayerTurn = (newPlayerId) => {
+    // Debug guest permissions
+    console.log('Timer button clicked:', { 
+      isHostUser, 
+      allowGuestControl, 
+      playerId: playerId.current,
+      firebase: !!firebase,
+      gameId
+    });
+    
     // Check guest timer permissions in multiplayer mode
     if (firebase && gameId && !isHostUser && !allowGuestControl) {
       Alert.alert('Not Allowed', 'The host has disabled guest timer controls.');
@@ -1766,9 +1833,9 @@ const BoardGameTimer = () => {
     setIsRunning(true);
     setGameStarted(true);
     
-    // Simple timer ownership - whoever clicked gets it
+    // Always take timer authority when clicking - first action wins
     setAuthoritativeTimerPlayerId(playerId.current);
-    console.log('Timer started by:', playerId.current);
+    console.log('Taking timer authority on button click:', playerId.current);
     
     // Play turn sound if enabled
     if (playTurnSounds) {
@@ -1780,9 +1847,12 @@ const BoardGameTimer = () => {
       navigator.vibrate([100, 50, 100]);
     }
     
-    // Simple sync - just send the current state
+    // Always sync immediately when we take an action - let Firebase resolve conflicts
     if (firebase && gameId) {
-      syncGameStateToFirebase();
+      setTimeout(() => {
+        syncGameStateToFirebase();
+        console.log('Timer state synced after taking authority:', playerId.current);
+      }, 50); // Faster sync to win conflicts
     }
   };
 
