@@ -367,6 +367,9 @@ const GameScreen = ({
   removePlayer,
   PLAYER_COLORS,
   updatePlayerColor,
+  updatePlayerName,
+  tempPlayerName,
+  setTempPlayerName,
   timerMode,
   formatTime,
   getAverageTurnTime,
@@ -584,16 +587,22 @@ const GameScreen = ({
                         lineHeight: player.name.length > 15 ? (player.name.length > 20 ? 14 : 16) : 20,
                       }
                     ]}
-                    value={player.name}
+                    value={editingPlayerId === player.id ? tempPlayerName : player.name}
                     onChangeText={handlePlayerNameChange(player.id)}
-                    onFocus={() => setEditingPlayerId(player.id)}
+                    onFocus={() => {
+                      setEditingPlayerId(player.id);
+                      setTempPlayerName(player.name); // Initialize temp name with current name
+                    }}
                     onBlur={(e) => {
+                      const finalName = tempPlayerName.trim() || player.name;
                       setEditingPlayerId(null);
-                      const finalName = e.target.value || player.name;
                       
-                      // Force final sync on blur using the same immediate pattern as game name
-                      handlePlayerNameChange(player.id)(finalName);
-                      console.log('Final name synced on blur for player:', player.id, finalName);
+                      // Only update if name actually changed
+                      if (finalName !== player.name) {
+                        console.log('Final name sync on blur for player:', player.id, finalName);
+                        updatePlayerName(player.id, finalName);
+                      }
+                      setTempPlayerName(''); // Clear temp name
                     }}
                     autoComplete="off"
                     selectTextOnFocus={true}
@@ -646,8 +655,10 @@ const GameScreen = ({
                         player.color === color.value && styles.selectedColor
                       ]}
                       onPress={() => {
+                        console.log('Color picker clicked for player:', player.id, 'color:', color.value);
                         updatePlayerColor(player.id, color.value);
                         setShowColorPicker(null);
+                        console.log('Color picker closed, sync should have started');
                       }}
                     >
                       {player.color === color.value && (
@@ -671,18 +682,34 @@ const GameScreen = ({
                     <TextInput
                       key={`mobile-player-name-${player.id}`}
                       style={[styles.playerNameInputMobile, styles.playerNameInputMobileLarge]}
-                      value={player.name || ''}
+                      value={tempPlayerName}
                       onChangeText={(text) => {
                         console.log('Name changing:', player.id, text);
                         handlePlayerNameChange(player.id)(text);
                       }}
                       onBlur={() => {
-                        console.log('Name input blur');
-                        setTimeout(() => setEditingPlayerId(null), 150);
+                        const finalName = tempPlayerName.trim() || player.name;
+                        console.log('Name input blur, final name:', finalName);
+                        
+                        // Only update if name actually changed
+                        if (finalName !== player.name) {
+                          updatePlayerName(player.id, finalName);
+                        }
+                        setTimeout(() => {
+                          setEditingPlayerId(null);
+                          setTempPlayerName('');
+                        }, 150);
                       }}
                       onSubmitEditing={() => {
-                        console.log('Name submit');
+                        const finalName = tempPlayerName.trim() || player.name;
+                        console.log('Name submit, final name:', finalName);
+                        
+                        // Only update if name actually changed
+                        if (finalName !== player.name) {
+                          updatePlayerName(player.id, finalName);
+                        }
                         setEditingPlayerId(null);
+                        setTempPlayerName('');
                       }}
                       autoFocus={true}
                       selectTextOnFocus={true}
@@ -696,6 +723,7 @@ const GameScreen = ({
                       onPress={() => {
                         console.log('Starting edit for player:', player.id);
                         setEditingPlayerId(player.id);
+                        setTempPlayerName(player.name || ''); // Initialize temp name
                       }} 
                       style={styles.playerNameTouchArea}
                       activeOpacity={0.7}
@@ -844,11 +872,12 @@ const BoardGameTimer = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [lastActionState, setLastActionState] = useState(null); // For undo functionality
   const [isOfflineMode, setIsOfflineMode] = useState(false);
-  const [allowGuestControl, setAllowGuestControl] = useState(false);
-  const [allowGuestNames, setAllowGuestNames] = useState(false);
+  const [allowGuestControl, setAllowGuestControl] = useState(true); // Default to allowing guest controls
+  const [allowGuestNames, setAllowGuestNames] = useState(true); // Default to allowing guest names
   const [isHostUser, setIsHostUser] = useState(true);
   const [lastActivePlayerId, setLastActivePlayerId] = useState(null);
   const [editingPlayerId, setEditingPlayerId] = useState(null); // Track which player is being edited
+  const [tempPlayerName, setTempPlayerName] = useState(''); // Track temporary name during editing
   const [authoritativeTimerPlayerId, setAuthoritativeTimerPlayerId] = useState(null); // Track who owns the current timer
   
   const [showColorPicker, setShowColorPicker] = useState(null);
@@ -880,6 +909,9 @@ const BoardGameTimer = () => {
   const gameNameDebounceRef = useRef();
   const joinGameIdDebounceRef = useRef();
   const playerNameDebounceRefs = useRef({});
+  const nameChangeTimeoutRef = useRef(); // For real-time name changes
+  const playerClickTimeoutRef = useRef(); // For debouncing rapid player clicks
+  const processingPlayerTurnRef = useRef(false); // Prevent concurrent player turn changes
   const autoSaveRef = useRef();
   const lastActiveTimeRef = useRef(Date.now());
   const wasRunningRef = useRef(false);
@@ -899,7 +931,7 @@ const BoardGameTimer = () => {
         clearInterval(autoSaveRef.current);
       }
     };
-  }, [gameStarted, players, activePlayerId, isRunning, currentGameName]);
+  }, [gameStarted]); // Only restart auto-save when game starts/ends, not on every state change
 
   // Load saved state on app start
   useEffect(() => {
@@ -1080,8 +1112,8 @@ const BoardGameTimer = () => {
     setGameId(newGameId);
     setIsHost(true);
     setIsHostUser(true);
-    setAllowGuestControl(false);
-    setAllowGuestNames(false);
+    setAllowGuestControl(true); // Allow guests to control timers by default
+    setAllowGuestNames(true); // Allow guests to edit names/colors by default
     setCurrentScreen('game');
     
     // Save playerId for this game to maintain host status
@@ -1386,39 +1418,51 @@ const BoardGameTimer = () => {
       return;
     }
     
-    console.log('Guest permissions check:', { isHostUser, allowGuestNames, canEdit: isHostUser || allowGuestNames });
+    console.log('Name change for player:', id, name, 'by:', playerId.current);
     
-    // Update player name immediately (optimistic update)
+    // Update player name immediately (optimistic update) 
     setPlayers(prev => prev.map(player => 
       player.id === id ? { ...player, name } : player
     ));
     
-    // Mark this as a local action BEFORE Firebase sync for stronger protection
-    markLocalAction(true); // true = direct sync, longer protection
-    
-    // Direct Firebase sync like settings - bypass full game state sync
+    // Direct Firebase sync for names - bypass general game state sync
     if (firebase && gameId) {
       setTimeout(async () => {
         try {
+          // Direct name sync to Firebase - more reliable for individual player updates
           const playerRef = firebase.ref(firebase.database, `games/${gameId}/players`);
-          const playersSnapshot = await firebase.get(playerRef);
-          if (playersSnapshot.exists()) {
-            const currentPlayers = playersSnapshot.val();
-            const updatedPlayers = currentPlayers.map(p => 
-              p.id === id ? { ...p, name } : p
+          const currentPlayersSnapshot = await firebase.get(playerRef);
+          
+          if (currentPlayersSnapshot.exists()) {
+            const currentPlayers = currentPlayersSnapshot.val() || [];
+            const updatedPlayers = currentPlayers.map(player => 
+              player.id === id ? { ...player, name } : player
             );
+            
+            // Update just the players array with the new name
             await firebase.set(playerRef, updatedPlayers);
-            console.log('Name change synced directly for player:', id, name);
+            console.log('Name directly synced to Firebase for player:', id, name);
+          } else {
+            // Fallback to full game state sync if players don't exist
+            await syncGameStateToFirebase();
+            console.log('Name fallback sync for player:', id, name);
           }
         } catch (error) {
-          console.log('Failed to sync name directly:', error);
+          console.log('Failed to sync name directly, trying fallback:', error);
+          // Fallback to general sync
+          try {
+            await syncGameStateToFirebase();
+            console.log('Name fallback sync completed');
+          } catch (fallbackError) {
+            console.log('Name fallback sync also failed:', fallbackError);
+          }
         }
-      }, 100);
+      }, 1); // Near-instant sync for names
     }
-  }, [isHostUser, allowGuestNames, firebase, gameId, syncGameStateToFirebase]);
+  }, [isHostUser, allowGuestNames, firebase, gameId, syncGameStateToFirebase, playerId]);
 
-  const updatePlayerColor = useCallback((playerId, color) => {
-    console.log('updatePlayerColor called:', playerId, color);
+  const updatePlayerColor = useCallback((colorPlayerId, color) => {
+    console.log('Color change for player:', colorPlayerId, color, 'by:', playerId.current);
     // Check guest permissions for changing player colors only in multiplayer mode
     if (firebase && gameId && !isHostUser && !allowGuestNames) {
       console.log('Color change blocked: guest permissions');
@@ -1427,37 +1471,53 @@ const BoardGameTimer = () => {
     }
     
     console.log('Setting player color locally...');
+    // Force immediate update for instant visual feedback
     setPlayers(prev => {
       const updated = prev.map(player => 
-        player.id === playerId ? { ...player, color } : player
+        player.id === colorPlayerId ? { ...player, color } : player
       );
-      console.log('Color updated locally:', updated.find(p => p.id === playerId)?.color);
+      console.log('Color updated locally:', updated.find(p => p.id === colorPlayerId)?.color);
       return updated;
     });
     
-    // Mark this as a local action BEFORE Firebase sync for stronger protection
-    markLocalAction(true); // true = direct sync, longer protection
+    // Mark this as a local action for optimistic updates
+    markLocalAction();
     
-    // Direct Firebase sync like settings - bypass full game state sync
+    // Direct Firebase sync for colors - bypass general game state sync
     if (firebase && gameId) {
       setTimeout(async () => {
         try {
+          // Direct color sync to Firebase - more reliable for individual player updates
           const playerRef = firebase.ref(firebase.database, `games/${gameId}/players`);
-          const playersSnapshot = await firebase.get(playerRef);
-          if (playersSnapshot.exists()) {
-            const currentPlayers = playersSnapshot.val();
-            const updatedPlayers = currentPlayers.map(p => 
-              p.id === playerId ? { ...p, color } : p
+          const currentPlayersSnapshot = await firebase.get(playerRef);
+          
+          if (currentPlayersSnapshot.exists()) {
+            const currentPlayers = currentPlayersSnapshot.val() || [];
+            const updatedPlayers = currentPlayers.map(player => 
+              player.id === colorPlayerId ? { ...player, color } : player
             );
+            
+            // Update just the players array with the new color
             await firebase.set(playerRef, updatedPlayers);
-            console.log('Color change synced directly for player:', playerId, color);
+            console.log('Color directly synced to Firebase for player:', colorPlayerId, color);
+          } else {
+            // Fallback to full game state sync if players don't exist
+            await syncGameStateToFirebase();
+            console.log('Color fallback sync for player:', colorPlayerId, color);
           }
         } catch (error) {
-          console.log('Failed to sync color directly:', error);
+          console.log('Failed to sync color directly, trying fallback:', error);
+          // Fallback to general sync
+          try {
+            await syncGameStateToFirebase();
+            console.log('Color fallback sync completed');
+          } catch (fallbackError) {
+            console.log('Color fallback sync also failed:', fallbackError);
+          }
         }
-      }, 100);
+      }, 1); // Near-instant sync for colors
     }
-  }, [isHostUser, allowGuestNames, firebase, gameId, syncGameStateToFirebase]);
+  }, [isHostUser, allowGuestNames, firebase, gameId, syncGameStateToFirebase, playerId]);
 
   const handleGameNameChange = useCallback((text) => {
     // Check permissions only in multiplayer mode when connected to Firebase
@@ -1482,44 +1542,72 @@ const BoardGameTimer = () => {
   const handleGuestControlToggle = useCallback(() => {
     if (!isHostUser) return; // Only hosts can change this
     
+    console.log('Taking immediate authority for guest control setting:', playerId.current);
+    
+    // Take immediate authority - become the "temporary main user" for this action
+    const previousAuthority = authoritativeTimerPlayerId;
+    setAuthoritativeTimerPlayerId(playerId.current);
+    
     const newValue = !allowGuestControl;
     setAllowGuestControl(newValue);
     console.log('Host changed guest timer controls to:', newValue);
     
-    // Sync only the specific setting - don't sync entire game state
+    // Immediate sync like the working game name - no delays
     if (firebase && gameId) {
       setTimeout(async () => {
         try {
           const settingRef = firebase.ref(firebase.database, `games/${gameId}/allowGuestControl`);
           await firebase.set(settingRef, newValue);
-          console.log('Guest control setting synced directly:', newValue);
+          console.log('Guest control setting synced immediately:', newValue);
+          // Restore previous authority after sync
+          if (previousAuthority && previousAuthority !== playerId.current) {
+            setTimeout(() => setAuthoritativeTimerPlayerId(previousAuthority), 100);
+          }
         } catch (error) {
           console.log('Failed to sync guest control setting:', error);
+          // Restore authority on error
+          if (previousAuthority && previousAuthority !== playerId.current) {
+            setAuthoritativeTimerPlayerId(previousAuthority);
+          }
         }
-      }, 200);
+      }, 10); // Immediate sync like game name
     }
-  }, [allowGuestControl, isHostUser, firebase, gameId]);
+  }, [allowGuestControl, isHostUser, firebase, gameId, authoritativeTimerPlayerId, playerId]);
 
   const handleGuestNamesToggle = useCallback(() => {
     if (!isHostUser) return; // Only hosts can change this
+    
+    console.log('Taking immediate authority for guest names setting:', playerId.current);
+    
+    // Take immediate authority - become the "temporary main user" for this action
+    const previousAuthority = authoritativeTimerPlayerId;
+    setAuthoritativeTimerPlayerId(playerId.current);
     
     const newValue = !allowGuestNames;
     setAllowGuestNames(newValue);
     console.log('Host changed guest name editing to:', newValue);
     
-    // Sync only the specific setting - don't sync entire game state
+    // Immediate sync like the working game name - no delays
     if (firebase && gameId) {
       setTimeout(async () => {
         try {
           const settingRef = firebase.ref(firebase.database, `games/${gameId}/allowGuestNames`);
           await firebase.set(settingRef, newValue);
-          console.log('Guest names setting synced directly:', newValue);
+          console.log('Guest names setting synced immediately:', newValue);
+          // Restore previous authority after sync
+          if (previousAuthority && previousAuthority !== playerId.current) {
+            setTimeout(() => setAuthoritativeTimerPlayerId(previousAuthority), 100);
+          }
         } catch (error) {
           console.log('Failed to sync guest names setting:', error);
+          // Restore authority on error
+          if (previousAuthority && previousAuthority !== playerId.current) {
+            setAuthoritativeTimerPlayerId(previousAuthority);
+          }
         }
-      }, 200);
+      }, 10); // Immediate sync like game name
     }
-  }, [allowGuestNames, isHostUser, firebase, gameId]);
+  }, [allowGuestNames, isHostUser, firebase, gameId, authoritativeTimerPlayerId, playerId]);
 
 
   const handleJoinGameIdChange = useCallback((text) => {
@@ -1528,9 +1616,11 @@ const BoardGameTimer = () => {
 
   const handlePlayerNameChange = useCallback((playerId) => 
     (text) => {
-      console.log('Player name changing:', playerId, text);
-      updatePlayerName(playerId, text);
-    }, [updatePlayerName]
+      console.log('Player name changing (temp only):', playerId, text);
+      
+      // Only update temporary name state, don't update actual player data yet
+      setTempPlayerName(text);
+    }, []
   );
 
   // Helper function to mark local actions for optimistic updates
@@ -1715,7 +1805,28 @@ const BoardGameTimer = () => {
               );
             }
           }
-          setPlayers(updates.players);
+          // Apply updates but preserve local timer values for authoritative player
+          setPlayers(currentPlayers => {
+            // If we are the authoritative timer owner, preserve our precise timer values
+            if (sanitizedData.authoritativeTimerPlayerId === playerId.current && activePlayerId !== null) {
+              const updatedPlayers = updates.players.map(fbPlayer => {
+                const currentPlayer = currentPlayers.find(cp => cp.id === fbPlayer.id);
+                // For the active player, keep local timer precision if we own it
+                if (fbPlayer.id === activePlayerId && currentPlayer) {
+                  return {
+                    ...fbPlayer,
+                    time: currentPlayer.time, // Keep precise local time
+                    turnStartTime: currentPlayer.turnStartTime // Keep precise start time
+                  };
+                }
+                return fbPlayer;
+              });
+              console.log('Preserving authoritative timer values for player:', activePlayerId);
+              return updatedPlayers;
+            }
+            return updates.players;
+          });
+          
           setActivePlayerId(updates.activePlayerId);
           setIsRunning(updates.isRunning);
           setGameStarted(updates.gameStarted);
@@ -1775,10 +1886,17 @@ const BoardGameTimer = () => {
   };
 
   const startPlayerTurn = (newPlayerId) => {
-    // Debug guest permissions
+    // Prevent concurrent processing to avoid authority conflicts during rapid clicking
+    if (processingPlayerTurnRef.current) {
+      console.log('Player turn change already in progress, ignoring click for:', newPlayerId);
+      return;
+    }
+    
     console.log('Timer button clicked:', { 
       isHostUser, 
       allowGuestControl, 
+      newPlayerId,
+      currentActive: activePlayerId,
       playerId: playerId.current,
       firebase: !!firebase,
       gameId
@@ -1792,6 +1910,11 @@ const BoardGameTimer = () => {
     
     // If clicking the active player, toggle pause/resume
     if (newPlayerId === activePlayerId && gameStarted) {
+      // Add a small delay to prevent rapid toggle conflicts in multiplayer
+      if (firebase && gameId && processingPlayerTurnRef.current) {
+        return; // Prevent rapid clicking in multiplayer
+      }
+      
       if (isRunning) {
         pauseGame();
       } else {
@@ -1800,11 +1923,19 @@ const BoardGameTimer = () => {
       return;
     }
     
+    // Set processing flag to prevent rapid clicks
+    processingPlayerTurnRef.current = true;
+    
     console.log('Starting turn for player:', newPlayerId);
     
     saveStateForUndo(); // Save state for undo
     
     const currentTime = Date.now();
+    
+    // Take timer authority IMMEDIATELY before any state changes
+    const previousAuthority = authoritativeTimerPlayerId;
+    setAuthoritativeTimerPlayerId(playerId.current);
+    console.log('Taking immediate timer authority on click:', playerId.current);
     
     // Update players state immediately - simple and direct
     setPlayers(prev => prev.map(player => {
@@ -1819,11 +1950,13 @@ const BoardGameTimer = () => {
           turnStartTime: null
         };
       } else if (player.id === newPlayerId) {
-        // Start new player's turn
+        // Start new player's turn - ensure preciseTime is properly set
+        const currentPreciseTime = player.preciseTime !== undefined ? player.preciseTime : player.time;
         return {
           ...player,
           isActive: true,
-          turnStartTime: currentTime
+          turnStartTime: currentTime,
+          preciseTime: currentPreciseTime // Maintain precise time for timer accuracy
         };
       }
       return { ...player, isActive: false };
@@ -1833,10 +1966,6 @@ const BoardGameTimer = () => {
     setActivePlayerId(newPlayerId);
     setIsRunning(true);
     setGameStarted(true);
-    
-    // Always take timer authority when clicking - first action wins
-    setAuthoritativeTimerPlayerId(playerId.current);
-    console.log('Taking timer authority on button click:', playerId.current);
     
     // Play turn sound if enabled
     if (playTurnSounds) {
@@ -1848,12 +1977,22 @@ const BoardGameTimer = () => {
       navigator.vibrate([100, 50, 100]);
     }
     
-    // Always sync immediately when we take an action - let Firebase resolve conflicts
+    // Immediate sync with authority - no delays for rapid click handling
     if (firebase && gameId) {
       setTimeout(() => {
         syncGameStateToFirebase();
-        console.log('Timer state synced after taking authority:', playerId.current);
-      }, 50); // Faster sync to win conflicts
+        console.log('Timer state synced with immediate authority:', playerId.current);
+        
+        // Clear processing flag immediately after sync starts (ultra fast)
+        setTimeout(() => {
+          processingPlayerTurnRef.current = false;
+        }, 1); // Ultra fast unlock for rapid clicking
+      }, 1); // Near-instant sync for rapid click handling
+    } else {
+      // Clear processing flag immediately if no Firebase sync needed
+      setTimeout(() => {
+        processingPlayerTurnRef.current = false;
+      }, 1); // Ultra fast for local games
     }
   };
 
@@ -1872,12 +2011,15 @@ const BoardGameTimer = () => {
       setPlayers(prev => prev.map(player => {
         if (player.id === activePlayerId && player.isActive) {
           const turnDuration = player.turnStartTime ? currentTime - player.turnStartTime : 0;
+          // Preserve current time values without resetting
+          const currentPreciseTime = player.preciseTime || player.time;
           return {
             ...player,
             isActive: false,
             turns: (player.turns || 0) + 1,
             totalTurnTime: (player.totalTurnTime || 0) + turnDuration,
-            turnStartTime: null
+            turnStartTime: null,
+            preciseTime: currentPreciseTime // Ensure preciseTime is preserved
           };
         }
         return player;
@@ -1919,11 +2061,23 @@ const BoardGameTimer = () => {
       if (!activePlayerId) {
         // Restart the last active player's timer
         setActivePlayerId(playerToResume);
-        setPlayers(prev => prev.map(player => ({
-          ...player,
-          isActive: player.id === playerToResume,
-          turnStartTime: player.id === playerToResume ? Date.now() : null
-        })));
+        setPlayers(prev => prev.map(player => {
+          if (player.id === playerToResume) {
+            // Ensure preciseTime is properly initialized from current time
+            const currentPreciseTime = player.preciseTime !== undefined ? player.preciseTime : player.time;
+            return {
+              ...player,
+              isActive: true,
+              turnStartTime: Date.now(),
+              preciseTime: currentPreciseTime // Maintain precise time for proper countdown
+            };
+          }
+          return {
+            ...player,
+            isActive: false,
+            turnStartTime: null
+          };
+        }));
       }
       setIsRunning(true);
       
@@ -2062,6 +2216,7 @@ const BoardGameTimer = () => {
     setPlayers(prev => prev.map(player => ({
       ...player,
       time: resetTime,
+      preciseTime: resetTime, // Reset precise time to match regular time
       isActive: false,
       turns: 0,
       totalTurnTime: 0,
@@ -2172,6 +2327,12 @@ const BoardGameTimer = () => {
   // Load saved state
   const loadSavedState = () => {
     try {
+      // Don't restore auto-save if we already have an active game or are in multiplayer
+      if (gameStarted || gameId) {
+        console.log('Skipping auto-save restoration - game already active');
+        return;
+      }
+      
       const saved = localStorage.getItem('boardgame_auto_save');
       if (saved) {
         const gameState = JSON.parse(saved);
@@ -2185,6 +2346,7 @@ const BoardGameTimer = () => {
           setInitialTime(gameState.initialTime || 600);
           setCurrentGameName(gameState.currentGameName || '');
           setGameId(gameState.gameId || '');
+          console.log('Auto-save restored successfully');
         }
       }
     } catch (error) {
@@ -2707,6 +2869,9 @@ const BoardGameTimer = () => {
           removePlayer={removePlayer}
           PLAYER_COLORS={PLAYER_COLORS}
           updatePlayerColor={updatePlayerColor}
+          updatePlayerName={updatePlayerName}
+          tempPlayerName={tempPlayerName}
+          setTempPlayerName={setTempPlayerName}
           timerMode={timerMode}
           formatTime={formatTime}
           getAverageTurnTime={getAverageTurnTime}
@@ -3089,6 +3254,9 @@ const styles = StyleSheet.create({
     position: 'relative',
     zIndex: 1,
     overflow: 'hidden',
+    minHeight: 200, // Fixed minimum height
+    minWidth: '48%', // Responsive width based on screen
+    maxWidth: '48%', // Prevent cards from getting too wide
   },
   activePlayerCard: {
     borderColor: '#fbbf24',
