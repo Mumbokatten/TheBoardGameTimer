@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Alert, Platform } from 'react-native';
+import webSocketClient from './WebSocketClient.js';
 
 // Web-compatible alert function
 const showAlert = (title, message, buttons) => {
@@ -30,34 +31,16 @@ const showAlert = (title, message, buttons) => {
   }
 };
 
-// Firebase configuration and initialization
-let firebase = null;
-let database = null;
+// WebSocket client configuration and initialization
+let wsClient = null;
+let isWebSocketAvailable = false;
 
 try {
-  // Import Firebase functions
-  const { initializeApp } = require('firebase/app');
-  const { getDatabase, ref, set, update, onValue, get, off, remove } = require('firebase/database');
-  
-  // Your Firebase configuration using environment variables
-  const firebaseConfig = {
-    apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
-    authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN,
-    databaseURL: process.env.EXPO_PUBLIC_FIREBASE_DATABASE_URL,
-    projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID,
-    storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET,
-    messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-    appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID,
-    measurementId: process.env.EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID
-  };
-
-  // Initialize Firebase
-  const app = initializeApp(firebaseConfig);
-  database = getDatabase(app);
-  firebase = { app, database, ref, set, update, onValue, get, off, remove };
-  console.log('🔥 Firebase initialized successfully');
+  wsClient = webSocketClient;
+  isWebSocketAvailable = true;
+  console.log('🔌 WebSocket client initialized successfully');
 } catch (error) {
-  console.log('Firebase not available, running in local mode:', error);
+  console.log('WebSocket not available, running in local mode:', error);
 }
 
 // 20 selectable player colors
@@ -135,7 +118,7 @@ const HomeScreen = ({
       <Text style={[styles.title, theme === 'light' && styles.lightText]}>🎲 Board Game Timer</Text>
       <Text style={[styles.subtitle, theme === 'light' && styles.lightSubtext]}>Track time for every player in your board games</Text>
       <Text style={styles.localStatus}>
-        {firebase ? '🔥 Firebase Ready' : '📱 Local Mode'}
+        {isWebSocketAvailable ? '🔌 WebSocket Ready' : '📱 Local Mode'}
       </Text>
     </View>
 
@@ -341,7 +324,7 @@ const GameHistoryScreen = ({ gameHistory, setCurrentScreen, formatTime, deleteGa
 
 const GameScreen = ({
   gameId,
-  firebase,
+  wsClient,
   connectionStatus,
   shareGame,
   setShowSettings,
@@ -392,7 +375,7 @@ const GameScreen = ({
         <Text style={[styles.title, theme === 'light' && styles.lightText]}>
           {gameId ? `Game: ${gameId}` : '🎲 Board Game Timer'}
         </Text>
-        {firebase && gameId && (
+        {wsClient && gameId && (
           <View>
             <Text style={[
               styles.connectionStatus,
@@ -499,7 +482,7 @@ const GameScreen = ({
         </TouchableOpacity>
       )}
       
-      {gameId && firebase && (
+      {gameId && wsClient && (
         <TouchableOpacity 
           style={[styles.controlButton, styles.leaveButton]} 
           onPress={leaveGame}
@@ -998,17 +981,159 @@ const BoardGameTimer = () => {
     return () => clearInterval(intervalRef.current);
   }, [isRunning, activePlayerId, timerMode]);
 
+  // WebSocket event listeners
+  useEffect(() => {
+    if (!wsClient || !isWebSocketAvailable) return;
 
-  // Firebase game state sync effect - simplified for mobile
+    // Handle game creation response
+    const handleGameCreated = (message) => {
+      const { gameId: newGameId, gameState } = message;
+      setGameId(newGameId);
+      setIsHost(true);
+      setIsHostUser(true);
+      setAllowGuestControl(true);
+      setAllowGuestNames(true);
+      setCurrentScreen('game');
+      setConnectionStatus('connected');
+      
+      // Save playerId for this game to maintain host status
+      localStorage.setItem(`playerId_${newGameId}`, playerId.current);
+      
+      Alert.alert('Game Created!', `Game ID: ${newGameId}\n🔌 WebSocket multiplayer enabled!`);
+    };
+
+    // Handle game join response
+    const handleGameJoined = (message) => {
+      const { gameId: joinedGameId, gameState } = message;
+      setGameId(joinedGameId);
+      setIsHost(false);
+      setIsHostUser(gameState.hostId === playerId.current);
+      setCurrentScreen('game');
+      setConnectionStatus('connected');
+      
+      // Update game state from server
+      if (gameState.players) {
+        setPlayers(gameState.players);
+      }
+      if (gameState.currentGameName) {
+        setCurrentGameName(gameState.currentGameName);
+      }
+      setActivePlayerId(gameState.activePlayerId);
+      setIsRunning(gameState.isRunning);
+      setGameStarted(gameState.gameStarted);
+      setAllowGuestControl(gameState.allowGuestControl);
+      setAllowGuestNames(gameState.allowGuestNames);
+      
+      Alert.alert('Joined Game!', `🔌 Connected to multiplayer game: ${joinedGameId}`);
+      setJoinGameId(''); // Clear join input
+    };
+
+    // Handle game state updates from other players
+    const handleGameStateUpdate = (message) => {
+      const { gameState, updatedBy } = message;
+      
+      // Don't apply updates that we initiated to prevent conflicts
+      if (updatedBy === playerId.current) {
+        return;
+      }
+      
+      // Update local state with server state
+      if (gameState.players) {
+        setPlayers(gameState.players);
+      }
+      if (gameState.currentGameName !== undefined) {
+        setCurrentGameName(gameState.currentGameName);
+      }
+      if (gameState.activePlayerId !== undefined) {
+        setActivePlayerId(gameState.activePlayerId);
+      }
+      if (gameState.isRunning !== undefined) {
+        setIsRunning(gameState.isRunning);
+      }
+      if (gameState.gameStarted !== undefined) {
+        setGameStarted(gameState.gameStarted);
+      }
+      if (gameState.allowGuestControl !== undefined) {
+        setAllowGuestControl(gameState.allowGuestControl);
+      }
+      if (gameState.allowGuestNames !== undefined) {
+        setAllowGuestNames(gameState.allowGuestNames);
+      }
+      if (gameState.authoritativeTimerPlayerId !== undefined) {
+        setAuthoritativeTimerPlayerId(gameState.authoritativeTimerPlayerId);
+      }
+      
+      // Update connected players count
+      if (gameState.connectedPlayers) {
+        setConnectedPlayers(gameState.connectedPlayers);
+      }
+    };
+
+    // Handle player events
+    const handlePlayerJoined = (message) => {
+      const { gameState } = message;
+      setConnectedPlayers(gameState.connectedPlayers);
+      console.log(`Player joined: ${message.playerId}`);
+    };
+
+    const handlePlayerLeft = (message) => {
+      const { gameState } = message;
+      setConnectedPlayers(gameState.connectedPlayers);
+      console.log(`Player left: ${message.playerId}`);
+    };
+
+    // Handle connection status changes
+    const handleConnectionStatus = (status) => {
+      setConnectionStatus(status);
+      if (status === 'connected') {
+        setIsOnline(true);
+      } else {
+        setIsOnline(false);
+      }
+    };
+
+    // Handle errors
+    const handleError = (error) => {
+      console.error('WebSocket error:', error);
+      if (error.code === 'GAME_NOT_FOUND') {
+        Alert.alert('Game Not Found', `No active game found with that ID. Please check the ID or ask the host to share the correct code.`);
+        setConnectionStatus('offline');
+      } else if (error.code === 'PERMISSION_DENIED') {
+        Alert.alert('Permission Denied', error.message);
+      }
+    };
+
+    // Register event listeners
+    wsClient.on('gameCreated', handleGameCreated);
+    wsClient.on('gameJoined', handleGameJoined);
+    wsClient.on('gameStateUpdate', handleGameStateUpdate);
+    wsClient.on('playerJoined', handlePlayerJoined);
+    wsClient.on('playerLeft', handlePlayerLeft);
+    wsClient.on('connectionStatus', handleConnectionStatus);
+    wsClient.on('error', handleError);
+
+    // Cleanup function
+    return () => {
+      wsClient.off('gameCreated', handleGameCreated);
+      wsClient.off('gameJoined', handleGameJoined);
+      wsClient.off('gameStateUpdate', handleGameStateUpdate);
+      wsClient.off('playerJoined', handlePlayerJoined);
+      wsClient.off('playerLeft', handlePlayerLeft);
+      wsClient.off('connectionStatus', handleConnectionStatus);
+      wsClient.off('error', handleError);
+    };
+  }, [wsClient, isWebSocketAvailable, playerId]);
+
+  // WebSocket game state sync effects
   const lastSyncRef = useRef('');
   const syncTimeoutRef = useRef();
   
   useEffect(() => {
-    if (firebase && gameId && isHost) {
+    if (wsClient && wsClient.isConnected() && gameId && isHost) {
       // Debounce all syncs to prevent loops - only sync on initial host/game changes
       clearTimeout(syncTimeoutRef.current);
       syncTimeoutRef.current = setTimeout(() => {
-        syncGameStateToFirebase();
+        syncGameStateToWebSocket();
       }, 500);
     }
     
@@ -1020,7 +1145,7 @@ const BoardGameTimer = () => {
   const lastSyncedTimerState = useRef({ activePlayerId: null, isRunning: false });
   
   useEffect(() => {
-    if (firebase && gameId && gameStarted && authoritativeTimerPlayerId === playerId.current) {
+    if (wsClient && wsClient.isConnected() && gameId && gameStarted && authoritativeTimerPlayerId === playerId.current) {
       // Only sync if the timer state actually changed to prevent feedback loops
       const currentState = { activePlayerId, isRunning };
       const hasChanged = 
@@ -1030,7 +1155,7 @@ const BoardGameTimer = () => {
       if (hasChanged) {
         clearTimeout(timerSyncTimeoutRef.current);
         timerSyncTimeoutRef.current = setTimeout(() => {
-          syncGameStateToFirebase();
+          syncGameStateToWebSocket();
           lastSyncedTimerState.current = currentState;
         }, 1000); // Reduced delay but only sync when we own the timer
       }
@@ -1042,10 +1167,10 @@ const BoardGameTimer = () => {
   // Text changes sync - more responsive (removed settings to prevent game resets)
   const gameNameTimeoutRef = useRef();
   useEffect(() => {
-    if (firebase && gameId && isHost) {
+    if (wsClient && wsClient.isConnected() && gameId && isHost) {
       clearTimeout(gameNameTimeoutRef.current);
       gameNameTimeoutRef.current = setTimeout(() => {
-        syncGameStateToFirebase();
+        syncGameStateToWebSocket();
       }, 500); // Faster sync for text changes
     }
     
@@ -1056,29 +1181,15 @@ const BoardGameTimer = () => {
   const playerCountTimeoutRef = useRef();
   const lastPlayerCount = useRef(players.length);
   useEffect(() => {
-    if (firebase && gameId && players.length !== lastPlayerCount.current) {
+    if (wsClient && wsClient.isConnected() && gameId && players.length !== lastPlayerCount.current) {
       // Only sync when player count actually changes, not on timer updates
       lastPlayerCount.current = players.length;
       clearTimeout(playerCountTimeoutRef.current);
       playerCountTimeoutRef.current = setTimeout(() => {
-        syncGameStateToFirebase();
+        syncGameStateToWebSocket();
       }, 100); // Quick sync for player changes but not immediate
     }
-  }, [players.length, firebase, gameId]); // Only depend on count, not full players array
-
-  // Firebase listener effect
-  useEffect(() => {
-    if (firebase && gameId) {
-      const unsubscribe = listenToGameChanges();
-      syncPlayerJoin();
-      
-      return () => {
-        if (unsubscribe && typeof unsubscribe === 'function') {
-          unsubscribe();
-        }
-      };
-    }
-  }, [gameId]);
+  }, [players.length, wsClient, gameId]); // Only depend on count, not full players array
 
   const formatTime = (seconds) => {
     const hours = Math.floor(seconds / 3600);
@@ -1097,7 +1208,7 @@ const BoardGameTimer = () => {
 
   const createNewGame = async () => {
     // Check if already in a game and prevent multiple concurrent games
-    if (gameId && firebase) {
+    if (gameId && wsClient) {
       showAlert(
         'Already in Game',
         'You are already hosting or joined a game. Finish or leave the current game first.',
@@ -1108,17 +1219,6 @@ const BoardGameTimer = () => {
       return;
     }
 
-    const newGameId = generateGameId();
-    setGameId(newGameId);
-    setIsHost(true);
-    setIsHostUser(true);
-    setAllowGuestControl(true); // Allow guests to control timers by default
-    setAllowGuestNames(true); // Allow guests to edit names/colors by default
-    setCurrentScreen('game');
-    
-    // Save playerId for this game to maintain host status
-    localStorage.setItem(`playerId_${newGameId}`, playerId.current);
-    
     // Reset all state for fresh game
     setIsRunning(false);
     setActivePlayerId(null);
@@ -1129,11 +1229,38 @@ const BoardGameTimer = () => {
       { id: 1, name: 'Player 1', time: 0, isActive: false, color: PLAYER_COLORS[0].value, turns: 0, totalTurnTime: 0, turnStartTime: null },
       { id: 2, name: 'Player 2', time: 0, isActive: false, color: PLAYER_COLORS[1].value, turns: 0, totalTurnTime: 0, turnStartTime: null }
     ]);
-    
-    if (firebase) {
+
+    if (wsClient && isWebSocketAvailable) {
+      // Connect to WebSocket server if not already connected
+      if (!wsClient.isConnected()) {
+        try {
+          setConnectionStatus('connecting');
+          await wsClient.connect();
+        } catch (error) {
+          console.error('Failed to connect to WebSocket server:', error);
+          setConnectionStatus('error');
+          Alert.alert('Connection Error', 'Failed to connect to game server. Running in local mode.');
+          setCurrentScreen('game');
+          return;
+        }
+      }
+
+      // Create game via WebSocket
+      wsClient.createGame(playerId.current, { name: 'Host' });
       setConnectionStatus('connecting');
-      Alert.alert('Game Created!', `Game ID: ${newGameId}\n🔥 Firebase multiplayer enabled!`);
     } else {
+      // Local mode
+      const newGameId = generateGameId();
+      setGameId(newGameId);
+      setIsHost(true);
+      setIsHostUser(true);
+      setAllowGuestControl(true);
+      setAllowGuestNames(true);
+      setCurrentScreen('game');
+      
+      // Save playerId for this game to maintain host status
+      localStorage.setItem(`playerId_${newGameId}`, playerId.current);
+      
       Alert.alert('Game Created!', `Game ID: ${newGameId}\n📱 Running in local mode.`);
     }
   };
@@ -1142,7 +1269,7 @@ const BoardGameTimer = () => {
     if (!joinGameId.trim()) return;
     
     // Check if already in a game and prevent multiple concurrent games
-    if (gameId && firebase) {
+    if (gameId && wsClient) {
       showAlert(
         'Already in Game',
         'You are already in a game. Finish or leave the current game first.',
@@ -1161,39 +1288,39 @@ const BoardGameTimer = () => {
       return;
     }
     
-    if (firebase) {
+    if (wsClient && isWebSocketAvailable) {
+      // Connect to WebSocket server if not already connected
+      if (!wsClient.isConnected()) {
+        try {
+          setConnectionStatus('connecting');
+          await wsClient.connect();
+        } catch (error) {
+          console.error('Failed to connect to WebSocket server:', error);
+          setConnectionStatus('error');
+          Alert.alert('Connection Error', 'Failed to connect to game server.');
+          return;
+        }
+      }
+
+      // Try to join the game
       setConnectionStatus('connecting');
       
-      // Try to load existing game data
-      try {
-        const gameRef = firebase.ref(firebase.database, `games/${gameIdToJoin}`);
-        const snapshot = await firebase.get(gameRef);
-        
-        if (snapshot.exists()) {
-          // Game exists, join it
-          const savedPlayerId = localStorage.getItem(`playerId_${gameIdToJoin}`);
-          if (savedPlayerId) {
-            playerId.current = savedPlayerId;
-          } else {
-            // Save new playerId for future sessions
-            localStorage.setItem(`playerId_${gameIdToJoin}`, playerId.current);
-          }
-          
-          setGameId(gameIdToJoin);
-          setIsHost(false);
-          setIsHostUser(false);
-          setCurrentScreen('game');
-          Alert.alert('Joined Game!', `🔥 Connected to multiplayer game: ${gameIdToJoin}`);
-        } else {
-          // Game doesn't exist
-          Alert.alert('Game Not Found', `No active game found with ID: ${gameIdToJoin}. Please check the ID or ask the host to share the correct code.`);
-          setConnectionStatus('offline');
-        }
-      } catch (error) {
-        console.log('Error loading game:', error);
-        Alert.alert('Connection Error', 'Failed to connect to the game. Please try again.');
-        setConnectionStatus('error');
+      // Get or create playerId for this game
+      const savedPlayerId = localStorage.getItem(`playerId_${gameIdToJoin}`);
+      if (savedPlayerId) {
+        playerId.current = savedPlayerId;
+      } else {
+        localStorage.setItem(`playerId_${gameIdToJoin}`, playerId.current);
       }
+      
+      // Join game via WebSocket
+      wsClient.joinGame(gameIdToJoin, playerId.current, { name: 'Guest' });
+      
+      // Reset game state for joining
+      setIsRunning(false);
+      setActivePlayerId(null);
+      setLastActivePlayerId(null);
+      setGameStarted(false);
     } else {
       // Local mode - just set the ID without validation
       setGameId(gameIdToJoin);
@@ -1224,8 +1351,8 @@ const BoardGameTimer = () => {
         }
       } catch (error) {
         console.log('Copy failed:', error);
-        const modeText = firebase && isOnline 
-          ? '🔥 Multiplayer enabled with Firebase!'
+        const modeText = wsClient && wsClient.isConnected() && isOnline 
+          ? '🔌 Multiplayer enabled with WebSocket!'
           : '📱 Running in local mode.';
         const shareText = `Game ID: ${gameId}\n\n${modeText}`;
         alert(`Share Game: ${shareText}`);
@@ -1260,8 +1387,8 @@ const BoardGameTimer = () => {
     };
   };
 
-  // Firebase sync functions with local fallback
-  const syncGameStateToFirebase = async () => {
+  // WebSocket sync functions with local fallback
+  const syncGameStateToWebSocket = async () => {
     if (!gameId) return;
     
     const rawGameData = {
@@ -1279,40 +1406,18 @@ const BoardGameTimer = () => {
       allowGuestNames
     };
     
-    // Sanitize data before sending to Firebase
+    // Sanitize data before sending to WebSocket
     const gameData = sanitizeGameData(rawGameData);
 
-    // Always set hostId - either this player's ID if they're host, or preserve existing
-    if (isHost) {
-      gameData.hostId = playerId.current;
-    } else {
-      // For guests, fetch current hostId from Firebase to preserve it
+    if (wsClient && wsClient.isConnected()) {
       try {
-        const currentGameRef = firebase.ref(firebase.database, `games/${gameId}/hostId`);
-        const hostSnapshot = await firebase.get(currentGameRef);
-        if (hostSnapshot.exists()) {
-          gameData.hostId = hostSnapshot.val();
-        }
-      } catch (error) {
-        console.log('Could not preserve hostId:', error);
-      }
-    }
-
-    if (firebase && firebase.database) {
-      try {
-        if (isHost) {
-          // Host can set the entire game data including hostId
-          await firebase.set(firebase.ref(firebase.database, `games/${gameId}`), gameData);
-        } else {
-          // Guests use update to avoid overwriting hostId
-          const gameRef = firebase.ref(firebase.database, `games/${gameId}`);
-          await firebase.update(gameRef, gameData);
-        }
+        // Send game state update via WebSocket
+        wsClient.updateGameState(gameId, playerId.current, gameData);
         setConnectionStatus('connected');
         setIsOnline(true);
         return;
       } catch (error) {
-        console.log('Firebase sync error, falling back to local mode:', error);
+        console.log('WebSocket sync error, falling back to local mode:', error);
         setConnectionStatus('error');
         setIsOnline(false);
       }
@@ -1363,14 +1468,14 @@ const BoardGameTimer = () => {
     setPlayers([...players, newPlayer]);
     
     // Immediately sync player addition to Firebase
-    if (firebase && gameId) {
-      syncGameStateToFirebase(); // Immediate sync for player addition
+    if (wsClient && wsClient.isConnected() && gameId) {
+      syncGameStateToWebSocket(); // Immediate sync for player addition
     }
   };
 
   const removePlayer = (id) => {
     // Only hosts can remove players in multiplayer mode
-    if (firebase && gameId && !isHostUser) {
+    if (wsClient && wsClient.isConnected() && gameId && !isHostUser) {
       Alert.alert('Not Allowed', 'Only the host can remove players.');
       return;
     }
@@ -1413,7 +1518,7 @@ const BoardGameTimer = () => {
 
   const updatePlayerName = useCallback((id, name) => {
     // Check permissions only in multiplayer mode when connected to Firebase
-    if (firebase && gameId && !isHostUser && !allowGuestNames) {
+    if (wsClient && wsClient.isConnected() && gameId && !isHostUser && !allowGuestNames) {
       Alert.alert('Not Allowed', 'The host has disabled guest name editing.');
       return;
     }
@@ -1425,46 +1530,19 @@ const BoardGameTimer = () => {
       player.id === id ? { ...player, name } : player
     ));
     
-    // Direct Firebase sync for names - bypass general game state sync
-    if (firebase && gameId) {
-      setTimeout(async () => {
-        try {
-          // Direct name sync to Firebase - more reliable for individual player updates
-          const playerRef = firebase.ref(firebase.database, `games/${gameId}/players`);
-          const currentPlayersSnapshot = await firebase.get(playerRef);
-          
-          if (currentPlayersSnapshot.exists()) {
-            const currentPlayers = currentPlayersSnapshot.val() || [];
-            const updatedPlayers = currentPlayers.map(player => 
-              player.id === id ? { ...player, name } : player
-            );
-            
-            // Update just the players array with the new name
-            await firebase.set(playerRef, updatedPlayers);
-            console.log('Name directly synced to Firebase for player:', id, name);
-          } else {
-            // Fallback to full game state sync if players don't exist
-            await syncGameStateToFirebase();
-            console.log('Name fallback sync for player:', id, name);
-          }
-        } catch (error) {
-          console.log('Failed to sync name directly, trying fallback:', error);
-          // Fallback to general sync
-          try {
-            await syncGameStateToFirebase();
-            console.log('Name fallback sync completed');
-          } catch (fallbackError) {
-            console.log('Name fallback sync also failed:', fallbackError);
-          }
-        }
-      }, 1); // Near-instant sync for names
+    // Sync player name update via WebSocket
+    if (wsClient && wsClient.isConnected() && gameId) {
+      setTimeout(() => {
+        wsClient.updatePlayer(gameId, playerId.current, { id, name });
+        console.log('Name synced via WebSocket for player:', id, name);
+      }, 100); // Debounced sync for names
     }
-  }, [isHostUser, allowGuestNames, firebase, gameId, syncGameStateToFirebase, playerId]);
+  }, [isHostUser, allowGuestNames, wsClient, gameId, playerId]);
 
   const updatePlayerColor = useCallback((colorPlayerId, color) => {
     console.log('Color change for player:', colorPlayerId, color, 'by:', playerId.current);
     // Check guest permissions for changing player colors only in multiplayer mode
-    if (firebase && gameId && !isHostUser && !allowGuestNames) {
+    if (wsClient && wsClient.isConnected() && gameId && !isHostUser && !allowGuestNames) {
       console.log('Color change blocked: guest permissions');
       Alert.alert('Not Allowed', 'The host has disabled guest name and color editing.');
       return;
@@ -1483,45 +1561,18 @@ const BoardGameTimer = () => {
     // Mark this as a local action for optimistic updates
     markLocalAction();
     
-    // Direct Firebase sync for colors - bypass general game state sync
-    if (firebase && gameId) {
-      setTimeout(async () => {
-        try {
-          // Direct color sync to Firebase - more reliable for individual player updates
-          const playerRef = firebase.ref(firebase.database, `games/${gameId}/players`);
-          const currentPlayersSnapshot = await firebase.get(playerRef);
-          
-          if (currentPlayersSnapshot.exists()) {
-            const currentPlayers = currentPlayersSnapshot.val() || [];
-            const updatedPlayers = currentPlayers.map(player => 
-              player.id === colorPlayerId ? { ...player, color } : player
-            );
-            
-            // Update just the players array with the new color
-            await firebase.set(playerRef, updatedPlayers);
-            console.log('Color directly synced to Firebase for player:', colorPlayerId, color);
-          } else {
-            // Fallback to full game state sync if players don't exist
-            await syncGameStateToFirebase();
-            console.log('Color fallback sync for player:', colorPlayerId, color);
-          }
-        } catch (error) {
-          console.log('Failed to sync color directly, trying fallback:', error);
-          // Fallback to general sync
-          try {
-            await syncGameStateToFirebase();
-            console.log('Color fallback sync completed');
-          } catch (fallbackError) {
-            console.log('Color fallback sync also failed:', fallbackError);
-          }
-        }
-      }, 1); // Near-instant sync for colors
+    // Sync player color update via WebSocket
+    if (wsClient && wsClient.isConnected() && gameId) {
+      setTimeout(() => {
+        wsClient.updatePlayer(gameId, playerId.current, { id: colorPlayerId, color });
+        console.log('Color synced via WebSocket for player:', colorPlayerId, color);
+      }, 100); // Debounced sync for colors
     }
-  }, [isHostUser, allowGuestNames, firebase, gameId, syncGameStateToFirebase, playerId]);
+  }, [isHostUser, allowGuestNames, wsClient, gameId, playerId]);
 
   const handleGameNameChange = useCallback((text) => {
     // Check permissions only in multiplayer mode when connected to Firebase
-    if (firebase && gameId && !isHostUser && !allowGuestControl) {
+    if (wsClient && wsClient.isConnected() && gameId && !isHostUser && !allowGuestControl) {
       Alert.alert('Not Allowed', 'The host has disabled guest name editing.');
       return;
     }
@@ -1533,10 +1584,10 @@ const BoardGameTimer = () => {
     setCurrentGameName(text);
     
     // Immediate sync for name changes
-    if (firebase && gameId) {
-      syncGameStateToFirebase(); // Immediate sync for name changes
+    if (wsClient && wsClient.isConnected() && gameId) {
+      syncGameStateToWebSocket(); // Immediate sync for name changes
     }
-  }, [isHostUser, allowGuestNames, firebase, gameId]);
+  }, [isHostUser, allowGuestNames, wsClient, gameId]);
 
   // Handle settings changes with immediate sync for hosts
   const handleGuestControlToggle = useCallback(() => {
@@ -1552,13 +1603,12 @@ const BoardGameTimer = () => {
     setAllowGuestControl(newValue);
     console.log('Host changed guest timer controls to:', newValue);
     
-    // Immediate sync like the working game name - no delays
-    if (firebase && gameId) {
-      setTimeout(async () => {
+    // Immediate sync via WebSocket
+    if (wsClient && wsClient.isConnected() && gameId) {
+      setTimeout(() => {
         try {
-          const settingRef = firebase.ref(firebase.database, `games/${gameId}/allowGuestControl`);
-          await firebase.set(settingRef, newValue);
-          console.log('Guest control setting synced immediately:', newValue);
+          syncGameStateToWebSocket();
+          console.log('Guest control setting synced via WebSocket:', newValue);
           // Restore previous authority after sync
           if (previousAuthority && previousAuthority !== playerId.current) {
             setTimeout(() => setAuthoritativeTimerPlayerId(previousAuthority), 100);
@@ -1570,9 +1620,9 @@ const BoardGameTimer = () => {
             setAuthoritativeTimerPlayerId(previousAuthority);
           }
         }
-      }, 10); // Immediate sync like game name
+      }, 10); // Immediate sync
     }
-  }, [allowGuestControl, isHostUser, firebase, gameId, authoritativeTimerPlayerId, playerId]);
+  }, [allowGuestControl, isHostUser, wsClient, gameId, authoritativeTimerPlayerId, playerId]);
 
   const handleGuestNamesToggle = useCallback(() => {
     if (!isHostUser) return; // Only hosts can change this
@@ -1587,13 +1637,12 @@ const BoardGameTimer = () => {
     setAllowGuestNames(newValue);
     console.log('Host changed guest name editing to:', newValue);
     
-    // Immediate sync like the working game name - no delays
-    if (firebase && gameId) {
-      setTimeout(async () => {
+    // Immediate sync via WebSocket
+    if (wsClient && wsClient.isConnected() && gameId) {
+      setTimeout(() => {
         try {
-          const settingRef = firebase.ref(firebase.database, `games/${gameId}/allowGuestNames`);
-          await firebase.set(settingRef, newValue);
-          console.log('Guest names setting synced immediately:', newValue);
+          syncGameStateToWebSocket();
+          console.log('Guest names setting synced via WebSocket:', newValue);
           // Restore previous authority after sync
           if (previousAuthority && previousAuthority !== playerId.current) {
             setTimeout(() => setAuthoritativeTimerPlayerId(previousAuthority), 100);
@@ -1605,9 +1654,9 @@ const BoardGameTimer = () => {
             setAuthoritativeTimerPlayerId(previousAuthority);
           }
         }
-      }, 10); // Immediate sync like game name
+      }, 10); // Immediate sync
     }
-  }, [allowGuestNames, isHostUser, firebase, gameId, authoritativeTimerPlayerId, playerId]);
+  }, [allowGuestNames, isHostUser, wsClient, gameId, authoritativeTimerPlayerId, playerId]);
 
 
   const handleJoinGameIdChange = useCallback((text) => {
@@ -1636,253 +1685,13 @@ const BoardGameTimer = () => {
 
 
   const listenToGameChanges = () => {
-    if (!firebase || !firebase.database || !gameId) return;
-
-    const gameRef = firebase.ref(firebase.database, `games/${gameId}`);
-    
-    const unsubscribe = firebase.onValue(gameRef, (snapshot) => {
-      const data = snapshot.val();
-      
-      // If game data doesn't exist, it means host finished the game and removed it
-      // Kick out all players except the one who just removed it (the host who called finishGame)
-      if (!data) {
-        // Only show alert if we're not currently finishing the game ourselves
-        // (i.e., if we're not the host who just called finishGame)
-        if (currentScreen !== 'home') {
-          Alert.alert(
-            'Game Ended',
-            'The host has finished the game. You have been disconnected.',
-            [
-              {
-                text: 'OK',
-                onPress: () => {
-                  // Reset everything and return to home
-                  performReset();
-                  setCurrentScreen('home');
-                  setGameId('');
-                  setIsHost(false);
-                  setIsHostUser(false);
-                  setConnectionStatus('disconnected');
-                  setIsOnline(false);
-                }
-              }
-            ]
-          );
-        }
-        return;
-      }
-      
-      if (data && data.lastUpdated) {
-        const now = Date.now();
-        
-        // Smart conflict protection - only ignore updates that would conflict with our specific changes
-        const localPlayersAreDefault = players.length <= 2 && players.every(p => p.name.startsWith('Player '));
-        const isInitialLoad = localPlayersAreDefault || players.length === 0;
-        const hasRecentLocalAction = now < ignoreUpdatesUntilRef.current;
-        
-        // Only ignore updates from the same player who made the local action, not all updates
-        if (!isInitialLoad && hasRecentLocalAction && data.lastActionPlayerId === playerId.current) {
-          console.log('Ignoring Firebase update from same player due to recent local action, remaining:', ignoreUpdatesUntilRef.current - now + 'ms');
-          setConnectionStatus('connected');
-          setIsOnline(true);
-          return;
-        }
-        
-        // Update if this change came from another player AND we haven't made a conflicting local action
-        if (data.lastActionPlayerId !== playerId.current) {
-          // Additional check: if the update is very recent and we just made an action, prioritize our action
-          // Extended conflict window to ensure our local changes have time to sync
-          if (data.lastActionPlayerId && data.lastUpdated > lastLocalActionRef.current && 
-              now - lastLocalActionRef.current < 600) {
-            console.log('Conflict detected: prioritizing recent local action');
-            setConnectionStatus('connected');
-            setIsOnline(true);
-            return; // Don't apply remote updates if we have a very recent local action
-          }
-          
-          // Sanitize incoming data and batch updates to prevent multiple re-renders
-          const sanitizedData = sanitizeGameData(data);
-          
-          // Validation: Don't apply updates that would reset the game to initial state
-          // BUT allow initial loading when joining a game (when local players array is empty or default)
-          const hasValidPlayers = sanitizedData.players && sanitizedData.players.length > 0;
-          const playersHaveNames = sanitizedData.players.some(p => p.name && p.name.trim() !== '' && !p.name.startsWith('Player '));
-          const localPlayersAreDefault = players.length <= 2 && players.every(p => p.name.startsWith('Player '));
-          const isInitialLoad = localPlayersAreDefault || players.length === 0;
-          const isLikelyReset = !isInitialLoad && (!hasValidPlayers || (!playersHaveNames && players.some(p => p.name && !p.name.startsWith('Player '))));
-          
-          if (isLikelyReset) {
-            console.log('Detected potential state reset - rejecting Firebase update:', { 
-              hasValidPlayers, 
-              playersHaveNames, 
-              currentPlayersHaveNames: players.some(p => p.name && !p.name.startsWith('Player ')),
-              sanitizedPlayers: sanitizedData.players,
-              isInitialLoad
-            });
-            setConnectionStatus('connected');
-            setIsOnline(true);
-            return; // Don't apply updates that look like resets
-          }
-          
-          // Simple timer protection - only protect if we're actively running the timer
-          const weOwnTimer = authoritativeTimerPlayerId === playerId.current && isRunning && activePlayerId !== null;
-          
-          console.log('Timer protection check:', { 
-            weOwnTimer, 
-            isRunning, 
-            activePlayerId,
-            authoritativeTimerPlayerId 
-          });
-          
-          const updates = {
-            players: sanitizedData.players.map(incomingPlayer => {
-              const localPlayer = players.find(p => p.id === incomingPlayer.id);
-              
-              // If we're running the timer for this player, keep our timer data
-              if (weOwnTimer && incomingPlayer.id === activePlayerId) {
-                return localPlayer ? {
-                  ...incomingPlayer,
-                  time: localPlayer.time,
-                  preciseTime: localPlayer.preciseTime || localPlayer.time,
-                  isActive: true
-                } : incomingPlayer;
-              }
-              
-              // Always accept incoming changes for other players to avoid conflicts
-              if (localPlayer) {
-                return {
-                  ...incomingPlayer,
-                  // Accept all incoming changes to prevent sync loops
-                  name: incomingPlayer.name,
-                  color: incomingPlayer.color
-                };
-              }
-              
-              return incomingPlayer;
-            }),
-            // Accept pause commands even if we own the timer, otherwise protect running state
-            activePlayerId: sanitizedData.activePlayerId, // Always accept player changes
-            isRunning: !sanitizedData.isRunning ? false : (weOwnTimer ? isRunning : sanitizedData.isRunning), // Always accept pause
-            gameStarted: sanitizedData.gameStarted,
-            timerMode: sanitizedData.timerMode,
-            initialTime: sanitizedData.initialTime,
-            currentGameName: sanitizedData.currentGameName,
-            allowGuestControl: sanitizedData.allowGuestControl,
-            allowGuestNames: sanitizedData.allowGuestNames,
-            isHostUser: data.hostId === playerId.current
-          };
-          
-          // Apply all updates at once, but protect currently editing player and authoritative timer
-          if (editingPlayerId !== null) {
-            // Merge players but keep the currently editing player's name and prevent player removal
-            const currentEditingPlayer = players.find(p => p.id === editingPlayerId);
-            if (currentEditingPlayer) {
-              // Ensure the editing player is preserved in the updates
-              const editingPlayerExists = updates.players.some(p => p.id === editingPlayerId);
-              if (!editingPlayerExists) {
-                // If the editing player was removed from the update, add them back
-                updates.players.push(currentEditingPlayer);
-                console.log('Restored editing player to prevent removal during name edit:', editingPlayerId);
-              } else {
-                // Just update the name to match current local state
-                updates.players = updates.players.map(p => 
-                  p.id === editingPlayerId ? { ...p, name: currentEditingPlayer.name } : p
-                );
-              }
-            }
-          }
-          
-          // If we are the authoritative timer owner, don't let others overwrite our timer count and precise time
-          if (data.authoritativeTimerPlayerId === playerId.current && activePlayerId !== null) {
-            const currentActivePlayer = players.find(p => p.id === activePlayerId);
-            if (currentActivePlayer) {
-              updates.players = updates.players.map(p => 
-                p.id === activePlayerId ? { 
-                  ...p, 
-                  time: currentActivePlayer.time,
-                  preciseTime: currentActivePlayer.preciseTime || currentActivePlayer.time
-                } : p
-              );
-            }
-          }
-          // Apply updates but preserve local timer values for authoritative player
-          setPlayers(currentPlayers => {
-            // If we are the authoritative timer owner, preserve our precise timer values
-            if (sanitizedData.authoritativeTimerPlayerId === playerId.current && activePlayerId !== null) {
-              const updatedPlayers = updates.players.map(fbPlayer => {
-                const currentPlayer = currentPlayers.find(cp => cp.id === fbPlayer.id);
-                // For the active player, keep local timer precision if we own it
-                if (fbPlayer.id === activePlayerId && currentPlayer) {
-                  return {
-                    ...fbPlayer,
-                    time: currentPlayer.time, // Keep precise local time
-                    turnStartTime: currentPlayer.turnStartTime // Keep precise start time
-                  };
-                }
-                return fbPlayer;
-              });
-              console.log('Preserving authoritative timer values for player:', activePlayerId);
-              return updatedPlayers;
-            }
-            return updates.players;
-          });
-          
-          setActivePlayerId(updates.activePlayerId);
-          setIsRunning(updates.isRunning);
-          setGameStarted(updates.gameStarted);
-          
-          // Update authoritative timer player ID from Firebase
-          if (sanitizedData.authoritativeTimerPlayerId) {
-            setAuthoritativeTimerPlayerId(sanitizedData.authoritativeTimerPlayerId);
-            console.log('Updated timer authority from Firebase:', sanitizedData.authoritativeTimerPlayerId);
-          }
-          
-          // Only update game name if we're not currently editing it
-          if (document.activeElement?.placeholder !== "Enter game name (optional)") {
-            setCurrentGameName(updates.currentGameName);
-          }
-          
-          // Update host status first
-          const newIsHostUser = gameId && firebase ? updates.isHostUser : isHostUser;
-          if (gameId && firebase) {
-            setIsHostUser(newIsHostUser);
-          }
-          
-          // Only update settings if we're not the host (guests should receive host's settings)
-          // Use the NEW host status, not the old one
-          if (!newIsHostUser) {
-            setAllowGuestControl(updates.allowGuestControl);
-            setAllowGuestNames(updates.allowGuestNames);
-            console.log('Guest received permission update:', { 
-              allowGuestControl: updates.allowGuestControl, 
-              allowGuestNames: updates.allowGuestNames,
-              newIsHostUser 
-            });
-          } else {
-            console.log('Host ignoring permission update to maintain authority, isHost:', newIsHostUser, 'playerId:', playerId.current, 'hostId:', data.hostId);
-          }
-        }
-        setConnectionStatus('connected');
-        setIsOnline(true);
-      }
-    });
-
-    return unsubscribe;
+    // Firebase listener replaced with WebSocket events - no longer needed
+    return () => {}; // Return empty cleanup function
   };
 
   const syncPlayerJoin = async () => {
-    if (!firebase || !firebase.database || !gameId) return;
-
-    try {
-      const playerRef = firebase.ref(firebase.database, `games/${gameId}/connectedPlayers/${playerId.current}`);
-      await firebase.set(playerRef, {
-        id: playerId.current,
-        joinedAt: Date.now(),
-        isActive: true
-      });
-    } catch (error) {
-      console.log('Player join sync error:', error);
-    }
+    // Firebase sync replaced with WebSocket events - no longer needed
+    return;
   };
 
   const startPlayerTurn = (newPlayerId) => {
@@ -1898,12 +1707,12 @@ const BoardGameTimer = () => {
       newPlayerId,
       currentActive: activePlayerId,
       playerId: playerId.current,
-      firebase: !!firebase,
+      wsClient: !!wsClient,
       gameId
     });
     
     // Check guest timer permissions in multiplayer mode
-    if (firebase && gameId && !isHostUser && !allowGuestControl) {
+    if (wsClient && wsClient.isConnected() && gameId && !isHostUser && !allowGuestControl) {
       Alert.alert('Not Allowed', 'The host has disabled guest timer controls.');
       return;
     }
@@ -1911,7 +1720,7 @@ const BoardGameTimer = () => {
     // If clicking the active player, toggle pause/resume
     if (newPlayerId === activePlayerId && gameStarted) {
       // Add a small delay to prevent rapid toggle conflicts in multiplayer
-      if (firebase && gameId && processingPlayerTurnRef.current) {
+      if (wsClient && wsClient.isConnected() && gameId && processingPlayerTurnRef.current) {
         return; // Prevent rapid clicking in multiplayer
       }
       
@@ -1978,9 +1787,9 @@ const BoardGameTimer = () => {
     }
     
     // Immediate sync with authority - no delays for rapid click handling
-    if (firebase && gameId) {
+    if (wsClient && wsClient.isConnected() && gameId) {
       setTimeout(() => {
-        syncGameStateToFirebase();
+        syncGameStateToWebSocket();
         console.log('Timer state synced with immediate authority:', playerId.current);
         
         // Clear processing flag immediately after sync starts (ultra fast)
@@ -1998,7 +1807,7 @@ const BoardGameTimer = () => {
 
   const pauseGame = () => {
     // Check guest timer permissions in multiplayer mode
-    if (firebase && gameId && !isHostUser && !allowGuestControl) {
+    if (wsClient && wsClient.isConnected() && gameId && !isHostUser && !allowGuestControl) {
       Alert.alert('Not Allowed', 'The host has disabled guest timer controls.');
       return;
     }
@@ -2029,18 +1838,12 @@ const BoardGameTimer = () => {
     setActivePlayerId(null);
     setAuthoritativeTimerPlayerId(null); // Clear authoritative timer owner
     
-    // Direct Firebase sync for pause state like settings
-    if (firebase && gameId) {
-      setTimeout(async () => {
+    // Direct WebSocket sync for pause state
+    if (wsClient && wsClient.isConnected() && gameId) {
+      setTimeout(() => {
         try {
-          const gameRef = firebase.ref(firebase.database, `games/${gameId}`);
-          await firebase.update(gameRef, {
-            isRunning: false,
-            activePlayerId: null,
-            lastUpdated: Date.now(),
-            lastActionPlayerId: playerId.current
-          });
-          console.log('Pause state synced directly');
+          syncGameStateToWebSocket();
+          console.log('Pause state synced via WebSocket');
         } catch (error) {
           console.log('Failed to sync pause directly:', error);
         }
@@ -2050,7 +1853,7 @@ const BoardGameTimer = () => {
   
   const resumeGame = () => {
     // Check guest timer permissions in multiplayer mode
-    if (firebase && gameId && !isHostUser && !allowGuestControl) {
+    if (wsClient && wsClient.isConnected() && gameId && !isHostUser && !allowGuestControl) {
       Alert.alert('Not Allowed', 'The host has disabled guest timer controls.');
       return;
     }
@@ -2088,9 +1891,9 @@ const BoardGameTimer = () => {
       }
       
       // Immediately sync resume state to Firebase for multiplayer
-      if (firebase && gameId) {
+      if (wsClient && wsClient.isConnected() && gameId) {
         setTimeout(() => {
-          syncGameStateToFirebase();
+          syncGameStateToWebSocket();
         }, 100); // Quick sync for resume state
       }
     }
@@ -2235,6 +2038,11 @@ const BoardGameTimer = () => {
           text: 'Leave Game',
           style: 'destructive',
           onPress: () => {
+            // Notify server we're leaving if connected
+            if (wsClient && wsClient.isConnected() && gameId) {
+              wsClient.leaveGame(gameId, playerId.current);
+            }
+            
             // Clear all game state and return to home
             setCurrentScreen('home');
             setGameId('');
@@ -2274,14 +2082,13 @@ const BoardGameTimer = () => {
           onPress: async () => {
             saveGame();
             
-            // If host, remove the game from Firebase to kick out other players
-            if (isHostUser && firebase && firebase.database && gameId) {
+            // If host, leave the game to kick out other players
+            if (isHostUser && wsClient && wsClient.isConnected() && gameId) {
               try {
-                const gameRef = firebase.ref(firebase.database, `games/${gameId}`);
-                await firebase.remove(gameRef);
-                console.log('Game removed from Firebase, all players kicked out');
+                wsClient.leaveGame(gameId, playerId.current);
+                console.log('Game ended, all players kicked out');
               } catch (error) {
-                console.log('Error removing game from Firebase:', error);
+                console.log('Error ending game:', error);
               }
             }
             
@@ -2479,8 +2286,8 @@ const BoardGameTimer = () => {
               time: continueMode ? p.time : 0, // Reset time if starting fresh
               isActive: false,
               color: p.color,
-              turns: 0,
-              totalTurnTime: 0,
+              turns: continueMode ? (p.turns || 0) : 0, // Preserve turns if continuing
+              totalTurnTime: continueMode ? (p.avgTurnTime * (p.turns || 0) || 0) : 0, // Restore total turn time
               turnStartTime: null
             }));
             
@@ -2843,7 +2650,7 @@ const BoardGameTimer = () => {
       {currentScreen === 'game' && (
         <GameScreen 
           gameId={gameId}
-          firebase={firebase}
+          wsClient={wsClient}
           connectionStatus={connectionStatus}
           shareGame={shareGame}
           setShowSettings={setShowSettings}
