@@ -1,0 +1,32 @@
+{
+  "name": "boardgame-timer-lambda",
+  "version": "1.0.0",
+  "description": "AWS Lambda WebSocket implementation for Board Game Timer",
+  "main": "index.js",
+  "scripts": {
+    "deploy": "sam deploy --guided",
+    "build": "sam build",
+    "local": "sam local start-api",
+    "test": "npm run test:unit",
+    "test:unit": "jest",
+    "package": "zip -r deployment.zip ."
+  },
+  "dependencies": {
+    "aws-sdk": "^2.1691.0",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "aws-sdk-mock": "^5.8.0"
+  },
+  "keywords": [
+    "aws",
+    "lambda",
+    "websocket",
+    "board-game",
+    "timer",
+    "multiplayer"
+  ],
+  "author": "Board Game Timer",
+  "license": "MIT"
+}

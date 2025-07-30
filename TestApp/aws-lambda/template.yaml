@@ -1,0 +1,286 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: 'Board Game Timer - AWS Lambda WebSocket API'
+
+Parameters:
+  Stage:
+    Type: String
+    Default: dev
+    Description: API Gateway stage name
+
+Globals:
+  Function:
+    Timeout: 30
+    Runtime: nodejs18.x
+    Environment:
+      Variables:
+        CONNECTIONS_TABLE: !Ref ConnectionsTable
+        GAMES_TABLE: !Ref GamesTable
+
+Resources:
+  # WebSocket API
+  BoardGameTimerWebSocketApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: BoardGameTimer-WebSocket
+      ProtocolType: WebSocket
+      RouteSelectionExpression: "$request.body.action"
+
+  # WebSocket API Stage
+  ApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref BoardGameTimerWebSocketApi
+      StageName: !Ref Stage
+      AutoDeploy: true
+
+  # Lambda Function
+  BoardGameTimerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'BoardGameTimer-${Stage}'
+      CodeUri: ./
+      Handler: index.handler
+      Environment:
+        Variables:
+          WEBSOCKET_ENDPOINT: !Sub 'https://${BoardGameTimerWebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}'
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ConnectionsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref GamesTable
+        - Statement:
+          - Effect: Allow
+            Action:
+              - 'execute-api:ManageConnections'
+            Resource:
+              - !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${BoardGameTimerWebSocketApi}/*'
+
+  # Routes
+  ConnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref BoardGameTimerWebSocketApi
+      RouteKey: $connect
+      AuthorizationType: NONE
+      OperationName: ConnectRoute
+      Target: !Join
+        - '/'
+        - - 'integrations'
+          - !Ref ConnectInteg
+  ConnectInteg:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref BoardGameTimerWebSocketApi
+      Description: Connect Integration
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${BoardGameTimerFunction.Arn}/invocations'
+
+  DisconnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref BoardGameTimerWebSocketApi
+      RouteKey: $disconnect
+      AuthorizationType: NONE
+      OperationName: DisconnectRoute
+      Target: !Join
+        - '/'
+        - - 'integrations'
+          - !Ref DisconnectInteg
+  DisconnectInteg:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref BoardGameTimerWebSocketApi
+      Description: Disconnect Integration
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${BoardGameTimerFunction.Arn}/invocations'
+
+  # Game action routes
+  CreateGameRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref BoardGameTimerWebSocketApi
+      RouteKey: createGame
+      AuthorizationType: NONE
+      OperationName: CreateGame
+      Target: !Join
+        - '/'
+        - - 'integrations'
+          - !Ref CreateGameInteg
+  CreateGameInteg:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref BoardGameTimerWebSocketApi
+      Description: Create Game Integration
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${BoardGameTimerFunction.Arn}/invocations'
+
+  JoinGameRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref BoardGameTimerWebSocketApi
+      RouteKey: joinGame
+      AuthorizationType: NONE
+      OperationName: JoinGame
+      Target: !Join
+        - '/'
+        - - 'integrations'
+          - !Ref JoinGameInteg
+  JoinGameInteg:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref BoardGameTimerWebSocketApi
+      Description: Join Game Integration
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${BoardGameTimerFunction.Arn}/invocations'
+
+  UpdateGameStateRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref BoardGameTimerWebSocketApi
+      RouteKey: updateGameState
+      AuthorizationType: NONE
+      OperationName: UpdateGameState
+      Target: !Join
+        - '/'
+        - - 'integrations'
+          - !Ref UpdateGameStateInteg
+  UpdateGameStateInteg:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref BoardGameTimerWebSocketApi
+      Description: Update Game State Integration
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${BoardGameTimerFunction.Arn}/invocations'
+
+  UpdatePlayerRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref BoardGameTimerWebSocketApi
+      RouteKey: updatePlayer
+      AuthorizationType: NONE
+      OperationName: UpdatePlayer
+      Target: !Join
+        - '/'
+        - - 'integrations'
+          - !Ref UpdatePlayerInteg
+  UpdatePlayerInteg:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref BoardGameTimerWebSocketApi
+      Description: Update Player Integration
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${BoardGameTimerFunction.Arn}/invocations'
+
+  LeaveGameRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref BoardGameTimerWebSocketApi
+      RouteKey: leaveGame
+      AuthorizationType: NONE
+      OperationName: LeaveGame
+      Target: !Join
+        - '/'
+        - - 'integrations'
+          - !Ref LeaveGameInteg
+  LeaveGameInteg:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref BoardGameTimerWebSocketApi
+      Description: Leave Game Integration
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${BoardGameTimerFunction.Arn}/invocations'
+
+  PingRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref BoardGameTimerWebSocketApi
+      RouteKey: ping
+      AuthorizationType: NONE
+      OperationName: Ping
+      Target: !Join
+        - '/'
+        - - 'integrations'
+          - !Ref PingInteg
+  PingInteg:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref BoardGameTimerWebSocketApi
+      Description: Ping Integration
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${BoardGameTimerFunction.Arn}/invocations'
+
+  # Lambda permissions
+  ConnectPermission:
+    Type: AWS::Lambda::Permission
+    DependsOn:
+      - BoardGameTimerWebSocketApi
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref BoardGameTimerFunction
+      Principal: apigateway.amazonaws.com
+
+  # DynamoDB Tables
+  ConnectionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub 'boardgame-connections-${Stage}'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: connectionId
+          AttributeType: S
+        - AttributeName: gameId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: connectionId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: gameId-index
+          KeySchema:
+            - AttributeName: gameId
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  GamesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub 'boardgame-games-${Stage}'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: gameId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: gameId
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+Outputs:
+  WebSocketURI:
+    Description: "The WSS Protocol URI to connect to"
+    Value: !Sub 'wss://${BoardGameTimerWebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}'
+    Export:
+      Name: !Sub '${AWS::StackName}-WebSocketURI'
+
+  ApiGatewayApi:
+    Description: "API Gateway WebSocket API"
+    Value: !Ref BoardGameTimerWebSocketApi
+    Export:
+      Name: !Sub '${AWS::StackName}-ApiGatewayApi'
+
+  ConnectionsTableName:
+    Description: "DynamoDB Connections table name"
+    Value: !Ref ConnectionsTable
+    Export:
+      Name: !Sub '${AWS::StackName}-ConnectionsTable'
+
+  GamesTableName:
+    Description: "DynamoDB Games table name"
+    Value: !Ref GamesTable
+    Export:
+      Name: !Sub '${AWS::StackName}-GamesTable'
